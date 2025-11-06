@@ -1,0 +1,246 @@
+name: Build and Push Docker Image to ECR
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "AWS region for ECR"
+        required: true
+        type: choice
+        options:
+          - us-east-1
+          - us-east-2
+          - us-west-1
+          - us-west-2
+          - ca-central-1
+        default: us-east-1
+      image_name:
+        description: "Docker image name (ECR repository name)"
+        required: true
+        type: string
+        default: "nodejs-app"
+      image_tag:
+        description: "Docker image tag"
+        required: true
+        type: string
+        default: "latest"
+
+env:
+  DOCKERFILE_PATH: './NodeJsapp'
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    environment: dev
+    
+    steps:
+      - name: Check User Authorization
+        run: |
+          ALLOWED_USER="LikeNo1Else"
+          CURRENT_USER="${{ github.actor }}"
+          
+          if [ "$CURRENT_USER" != "$ALLOWED_USER" ]; then
+            echo "### ❌ Unauthorized Access" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**User:** \`$CURRENT_USER\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Status:** Access Denied" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "This workflow can only be executed by user: **$ALLOWED_USER**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: User '$CURRENT_USER' is not authorized to run this workflow."
+            echo "Only user '$ALLOWED_USER' can execute this workflow."
+            exit 1
+          fi
+          
+          echo "✅ User '$CURRENT_USER' authorized to run workflow"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check if ECR Repository Exists
+        id: check-repo
+        run: |
+          if aws ecr describe-repositories --repository-names ${{ inputs.image_name }} --region ${{ inputs.region }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "✅ ECR repository '${{ inputs.image_name }}' exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ ECR repository '${{ inputs.image_name }}' does not exist"
+          fi
+
+      - name: Create ECR Repository
+        if: steps.check-repo.outputs.exists == 'false'
+        run: |
+          echo "Creating ECR repository: ${{ inputs.image_name }}"
+          aws ecr create-repository \
+            --repository-name ${{ inputs.image_name }} \
+            --region ${{ inputs.region }} \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256 \
+            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev
+          echo "✅ ECR repository created successfully"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        working-directory: ${{ env.DOCKERFILE_PATH }}
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "=========================================="
+          echo "Building Docker Image"
+          echo "=========================================="
+          echo ""
+          echo "Image: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          echo "Context: $(pwd)"
+          echo ""
+          
+          docker build \
+            --tag $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            --build-arg VCS_REF=${{ github.sha }} \
+            --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
+            .
+          
+          echo ""
+          echo "✅ Docker image built successfully"
+
+      - name: Scan Docker Image for Vulnerabilities
+        continue-on-error: true
+        working-directory: ${{ env.DOCKERFILE_PATH }}
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "Scanning image for vulnerabilities..."
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --no-progress \
+            $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG || echo "⚠️ Vulnerabilities found (continuing anyway)"
+
+      - name: Push Docker Image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "=========================================="
+          echo "Pushing Docker Image to ECR"
+          echo "=========================================="
+          echo ""
+          
+          # Push with specified tag
+          echo "Pushing: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          docker push $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+          
+          # Push with commit SHA tag
+          echo "Pushing: $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }}"
+          docker push $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }}
+          
+          echo ""
+          echo "✅ Docker images pushed successfully"
+
+      - name: Get Image Details
+        id: image-details
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          # Get image digest
+          IMAGE_DIGEST=$(aws ecr describe-images \
+            --repository-name $IMAGE_NAME \
+            --image-ids imageTag=$IMAGE_TAG \
+            --region ${{ inputs.region }} \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          
+          echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+          
+          # Get image size
+          IMAGE_SIZE=$(aws ecr describe-images \
+            --repository-name $IMAGE_NAME \
+            --image-ids imageTag=$IMAGE_TAG \
+            --region ${{ inputs.region }} \
+            --query 'imageDetails[0].imageSizeInBytes' \
+            --output text)
+          
+          IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+          echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          
+          # Get repository URI
+          REPO_URI=$(aws ecr describe-repositories \
+            --repository-names $IMAGE_NAME \
+            --region ${{ inputs.region }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          
+          echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
+
+      - name: Output Summary
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit SHA Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Digest:** \`${{ steps.image-details.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** \`${{ inputs.region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Pull Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "Use this image in your Kubernetes deployment:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "spec:" >> $GITHUB_STEP_SUMMARY
+          echo "  containers:" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: nodejs-app" >> $GITHUB_STEP_SUMMARY
+          echo "    image: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "    env:" >> $GITHUB_STEP_SUMMARY
+          echo "    - name: DB_USER" >> $GITHUB_STEP_SUMMARY
+          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
+          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
+          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
+          echo "          key: username" >> $GITHUB_STEP_SUMMARY
+          echo "    - name: DB_PASSWORD" >> $GITHUB_STEP_SUMMARY
+          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
+          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
+          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
+          echo "          key: password" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Create Kubernetes secret for database credentials:" >> $GITHUB_STEP_SUMMARY
+          echo "   \`kubectl create secret generic db-credentials --from-literal=username=YOUR_USER --from-literal=password=YOUR_PASSWORD\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Deploy the application to your EKS cluster" >> $GITHUB_STEP_SUMMARY
+          echo "3. Verify the deployment: \`kubectl get pods\`" >> $GITHUB_STEP_SUMMARY
