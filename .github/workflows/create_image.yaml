@@ -3,8 +3,8 @@ name: Build and Push Docker Image to ECR
 on:
   workflow_dispatch:
     inputs:
-      region:
-        description: "AWS region for ECR"
+      ecr_region:
+        description: "AWS region where ECR repository will be created/used"
         required: true
         type: choice
         options:
@@ -14,25 +14,33 @@ on:
           - us-west-2
           - ca-central-1
         default: us-east-1
-      image_name:
-        description: "Docker image name (ECR repository name)"
+      ecr_repository_name:
+        description: "ECR repository name (will be created if doesn't exist)"
         required: true
         type: string
         default: "nodejs-app"
+      image_name:
+        description: "Docker image name (same as ECR repository name)"
+        required: true
+        type: string
+        default: "api"
       image_tag:
-        description: "Docker image tag"
+        description: "Docker image tag (e.g., latest, v1.0.0, dev)"
         required: true
         type: string
         default: "latest"
 
 env:
-  DOCKERFILE_PATH: './NodeJsapp'
+  DOCKERFILE_PATH: '.'
 
 jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     environment: dev
+    permissions:
+      id-token: write
+      contents: read
     
     steps:
       - name: Check User Authorization
@@ -58,12 +66,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ inputs.region }}
+          role-to-assume: arn:aws:iam::841740285950:role/ECR-image-api-repo-Role
+          role-session-name: GitHubActions-ECR-Push
+          aws-region: ${{ inputs.ecr_region }}
 
       - name: Login to Amazon ECR
         id: login-ecr
@@ -72,25 +80,59 @@ jobs:
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
-          if aws ecr describe-repositories --repository-names ${{ inputs.image_name }} --region ${{ inputs.region }} 2>/dev/null; then
+          echo "=========================================="
+          echo "Checking ECR Repository"
+          echo "=========================================="
+          echo "Repository Name: ${{ inputs.ecr_repository_name }}"
+          echo "Region: ${{ inputs.ecr_region }}"
+          echo ""
+          
+          if aws ecr describe-repositories --repository-names ${{ inputs.ecr_repository_name }} --region ${{ inputs.ecr_region }} 2>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ ECR repository '${{ inputs.image_name }}' exists"
+            echo ""
+            echo "✅ ECR repository '${{ inputs.ecr_repository_name }}' exists"
+            
+            # Get repository details
+            REPO_URI=$(aws ecr describe-repositories \
+              --repository-names ${{ inputs.ecr_repository_name }} \
+              --region ${{ inputs.ecr_region }} \
+              --query 'repositories[0].repositoryUri' \
+              --output text)
+            echo "Repository URI: $REPO_URI"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ ECR repository '${{ inputs.image_name }}' does not exist"
+            echo ""
+            echo "⚠️ ECR repository '${{ inputs.ecr_repository_name }}' does not exist"
+            echo "Will create repository in next step..."
           fi
 
       - name: Create ECR Repository
         if: steps.check-repo.outputs.exists == 'false'
         run: |
-          echo "Creating ECR repository: ${{ inputs.image_name }}"
+          echo "=========================================="
+          echo "Creating ECR Repository"
+          echo "=========================================="
+          echo "Repository Name: ${{ inputs.ecr_repository_name }}"
+          echo "Region: ${{ inputs.ecr_region }}"
+          echo ""
+          
           aws ecr create-repository \
-            --repository-name ${{ inputs.image_name }} \
-            --region ${{ inputs.region }} \
+            --repository-name ${{ inputs.ecr_repository_name }} \
+            --region ${{ inputs.ecr_region }} \
             --image-scanning-configuration scanOnPush=true \
             --encryption-configuration encryptionType=AES256 \
             --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev
+          
+          echo ""
           echo "✅ ECR repository created successfully"
+          
+          # Get the newly created repository URI
+          REPO_URI=$(aws ecr describe-repositories \
+            --repository-names ${{ inputs.ecr_repository_name }} \
+            --region ${{ inputs.ecr_region }} \
+            --query 'repositories[0].repositoryUri' \
+            --output text)
+          echo "Repository URI: $REPO_URI"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -99,6 +141,7 @@ jobs:
         working-directory: ${{ env.DOCKERFILE_PATH }}
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
@@ -106,13 +149,16 @@ jobs:
           echo "Building Docker Image"
           echo "=========================================="
           echo ""
-          echo "Image: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+          echo "ECR Repository: $ECR_REPO_NAME"
+          echo "Image Name: $IMAGE_NAME"
+          echo "Image Tag: $IMAGE_TAG"
+          echo "Full Image: $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG"
           echo "Context: $(pwd)"
           echo ""
           
           docker build \
-            --tag $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG \
-            --tag $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }} \
+            --tag $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG \
+            --tag $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }} \
             --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
             --build-arg VCS_REF=${{ github.sha }} \
             --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
@@ -128,7 +174,7 @@ jobs:
         working-directory: ${{ env.DOCKERFILE_PATH }}
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_NAME: ${{ inputs.image_name }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "Scanning image for vulnerabilities..."
@@ -137,86 +183,105 @@ jobs:
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \
             --no-progress \
-            $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG || echo "⚠️ Vulnerabilities found (continuing anyway)"
+            $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG || echo "⚠️ Vulnerabilities found (continuing anyway)"
 
       - name: Push Docker Image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_NAME: ${{ inputs.image_name }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "=========================================="
           echo "Pushing Docker Image to ECR"
           echo "=========================================="
           echo ""
+          echo "Target Repository: $ECR_REGISTRY/$ECR_REPO_NAME"
+          echo "Region: ${{ inputs.ecr_region }}"
+          echo ""
           
           # Push with specified tag
-          echo "Pushing: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
-          docker push $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+          echo "Pushing: $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG"
+          docker push $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG
           
           # Push with commit SHA tag
-          echo "Pushing: $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }}"
-          docker push $ECR_REGISTRY/$IMAGE_NAME:${{ github.sha }}
+          echo "Pushing: $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}"
+          docker push $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}
           
           echo ""
-          echo "✅ Docker images pushed successfully"
+          echo "✅ Docker images pushed successfully to ECR repository: $ECR_REPO_NAME"
 
       - name: Get Image Details
         id: image-details
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_NAME: ${{ inputs.image_name }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          ECR_REGION: ${{ inputs.ecr_region }}
         run: |
+          echo "Retrieving image details from ECR..."
+          echo ""
+          
           # Get image digest
           IMAGE_DIGEST=$(aws ecr describe-images \
-            --repository-name $IMAGE_NAME \
+            --repository-name $ECR_REPO_NAME \
             --image-ids imageTag=$IMAGE_TAG \
-            --region ${{ inputs.region }} \
+            --region $ECR_REGION \
             --query 'imageDetails[0].imageDigest' \
             --output text)
           
           echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+          echo "Image Digest: $IMAGE_DIGEST"
           
           # Get image size
           IMAGE_SIZE=$(aws ecr describe-images \
-            --repository-name $IMAGE_NAME \
+            --repository-name $ECR_REPO_NAME \
             --image-ids imageTag=$IMAGE_TAG \
-            --region ${{ inputs.region }} \
+            --region $ECR_REGION \
             --query 'imageDetails[0].imageSizeInBytes' \
             --output text)
           
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
           echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "Image Size: ${IMAGE_SIZE_MB} MB"
           
           # Get repository URI
           REPO_URI=$(aws ecr describe-repositories \
-            --repository-names $IMAGE_NAME \
-            --region ${{ inputs.region }} \
+            --repository-names $ECR_REPO_NAME \
+            --region $ECR_REGION \
             --query 'repositories[0].repositoryUri' \
             --output text)
           
           echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
+          echo "Repository URI: $REPO_URI"
 
       - name: Output Summary
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### ECR Repository Details" >> $GITHUB_STEP_SUMMARY
+          echo "**ECR Repository Name:** \`${{ inputs.ecr_repository_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository URI:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** \`${{ inputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository Status:** \`${{ steps.check-repo.outputs.exists == 'false' && '✅ Created by workflow' || '✅ Already existed' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "**Commit SHA Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Digest:** \`${{ steps.image-details.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** \`${{ inputs.region }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Pull Command" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull with tag" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.image-details.outputs.repo_uri }}:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull with commit SHA" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.image-details.outputs.repo_uri }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
@@ -224,8 +289,8 @@ jobs:
           echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
           echo "spec:" >> $GITHUB_STEP_SUMMARY
           echo "  containers:" >> $GITHUB_STEP_SUMMARY
-          echo "  - name: nodejs-app" >> $GITHUB_STEP_SUMMARY
-          echo "    image: $ECR_REGISTRY/$IMAGE_NAME:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "    image: ${{ steps.image-details.outputs.repo_uri }}:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
           echo "    env:" >> $GITHUB_STEP_SUMMARY
           echo "    - name: DB_USER" >> $GITHUB_STEP_SUMMARY
           echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
@@ -238,6 +303,9 @@ jobs:
           echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
           echo "          key: password" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Authentication Method" >> $GITHUB_STEP_SUMMARY
+          echo "🔐 **OIDC Authentication** - Using IAM role: \`arn:aws:iam::841740285950:role/ECR-image-api-repo-Role\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Create Kubernetes secret for database credentials:" >> $GITHUB_STEP_SUMMARY
