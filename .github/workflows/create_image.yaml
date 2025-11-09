@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ecr_region:
-        description: "AWS region where ECR repository will be created/used"
+        description: "AWS region for ECR repository"
         required: true
         type: choice
         options:
@@ -14,11 +14,6 @@ on:
           - us-west-2
           - ca-central-1
         default: us-east-1
-      ecr_repository_name:
-        description: "ECR repository name"
-        required: true
-        type: string
-        default: "nodejs-nyan-app-repo"
       image_name:
         description: "Docker image name"
         required: true
@@ -29,6 +24,11 @@ on:
         required: true
         type: string
         default: "latest"
+      ecr_repository_name:
+        description: "ECR repository name"
+        required: true
+        type: string
+        default: "nodejs-nyan-app-repo"
 
 env:
   DOCKERFILE_PATH: '.'
