@@ -66,16 +66,120 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug - GitHub Context
+        run: |
+          echo "=========================================="
+          echo "GitHub Context Information"
+          echo "=========================================="
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository Owner: ${{ github.repository_owner }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo "SHA: ${{ github.sha }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Ref Name: ${{ github.ref_name }}"
+          echo "Event Name: ${{ github.event_name }}"
+          echo ""
+
+      - name: Debug - OIDC Token Claims (Before Auth)
+        run: |
+          echo "=========================================="
+          echo "OIDC Token Information"
+          echo "=========================================="
+          echo "Expected OIDC Subject: repo:${{ github.repository }}:ref:${{ github.ref }}"
+          echo "Expected Audience: sts.amazonaws.com"
+          echo "Token Issuer: https://token.actions.githubusercontent.com"
+          echo ""
+          echo "Trust Policy Should Allow:"
+          echo "  - Subject pattern: repo:K8-Team/api:*"
+          echo "  - Audience: sts.amazonaws.com"
+          echo ""
+
       - name: Configure AWS Credentials (OIDC)
+        id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::841740285950:role/ECR-image-api-repo-Role
-          role-session-name: GitHubActions-ECR-Push
+          role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
           aws-region: ${{ inputs.ecr_region }}
+          mask-aws-account-id: false
+
+      - name: Debug - AWS Authentication Success
+        run: |
+          echo "=========================================="
+          echo "AWS Authentication Successful!"
+          echo "=========================================="
+          echo "✅ Successfully assumed role via OIDC"
+          echo ""
+          echo "AWS Account ID: ${{ steps.aws-credentials.outputs.aws-account-id }}"
+          echo "Role ARN: arn:aws:iam::841740285950:role/ECR-image-api-repo-Role"
+          echo "Session Name: GitHubActions-ECR-Push-${{ github.run_id }}"
+          echo "Region: ${{ inputs.ecr_region }}"
+          echo ""
+
+      - name: Debug - Verify AWS Identity
+        run: |
+          echo "=========================================="
+          echo "AWS Identity Verification"
+          echo "=========================================="
+          echo ""
+          echo "Getting caller identity..."
+          aws sts get-caller-identity
+          echo ""
+          echo "Account: $(aws sts get-caller-identity --query Account --output text)"
+          echo "User ID: $(aws sts get-caller-identity --query UserId --output text)"
+          echo "ARN: $(aws sts get-caller-identity --query Arn --output text)"
+          echo ""
+
+      - name: Debug - Check IAM Permissions
+        continue-on-error: true
+        run: |
+          echo "=========================================="
+          echo "IAM Permissions Check"
+          echo "=========================================="
+          echo ""
+          echo "Testing ECR permissions..."
+          echo ""
+          
+          echo "1. Testing ecr:GetAuthorizationToken..."
+          if aws ecr get-authorization-token --region ${{ inputs.ecr_region }} > /dev/null 2>&1; then
+            echo "   ✅ ecr:GetAuthorizationToken - ALLOWED"
+          else
+            echo "   ❌ ecr:GetAuthorizationToken - DENIED"
+          fi
+          
+          echo ""
+          echo "2. Testing ecr:DescribeRepositories..."
+          if aws ecr describe-repositories --region ${{ inputs.ecr_region }} > /dev/null 2>&1; then
+            echo "   ✅ ecr:DescribeRepositories - ALLOWED"
+          else
+            echo "   ❌ ecr:DescribeRepositories - DENIED"
+          fi
+          
+          echo ""
+          echo "3. Listing accessible ECR repositories..."
+          aws ecr describe-repositories --region ${{ inputs.ecr_region }} \
+            --query 'repositories[].repositoryName' \
+            --output table || echo "   ⚠️ No repositories found or access denied"
+          echo ""
 
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Debug - ECR Login Details
+        run: |
+          echo "=========================================="
+          echo "ECR Login Information"
+          echo "=========================================="
+          echo "ECR Registry: ${{ steps.login-ecr.outputs.registry }}"
+          echo "Region: ${{ inputs.ecr_region }}"
+          echo "Account ID: $(echo ${{ steps.login-ecr.outputs.registry }} | cut -d'.' -f1)"
+          echo ""
+          echo "✅ Successfully logged in to ECR"
+          echo ""
 
       - name: Check if ECR Repository Exists
         id: check-repo
@@ -116,26 +220,60 @@ jobs:
           echo "Region: ${{ inputs.ecr_region }}"
           echo ""
           
-          aws ecr create-repository \
+          echo "Attempting to create repository..."
+          if aws ecr create-repository \
             --repository-name ${{ inputs.ecr_repository_name }} \
             --region ${{ inputs.ecr_region }} \
             --image-scanning-configuration scanOnPush=true \
             --encryption-configuration encryptionType=AES256 \
-            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev
-          
-          echo ""
-          echo "✅ ECR repository created successfully"
-          
-          # Get the newly created repository URI
-          REPO_URI=$(aws ecr describe-repositories \
-            --repository-names ${{ inputs.ecr_repository_name }} \
-            --region ${{ inputs.ecr_region }} \
-            --query 'repositories[0].repositoryUri' \
-            --output text)
-          echo "Repository URI: $REPO_URI"
+            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev; then
+            
+            echo ""
+            echo "✅ ECR repository created successfully"
+            
+            # Get the newly created repository URI
+            REPO_URI=$(aws ecr describe-repositories \
+              --repository-names ${{ inputs.ecr_repository_name }} \
+              --region ${{ inputs.ecr_region }} \
+              --query 'repositories[0].repositoryUri' \
+              --output text)
+            echo "Repository URI: $REPO_URI"
+          else
+            echo ""
+            echo "❌ Failed to create ECR repository"
+            echo "This might be due to:"
+            echo "  - Insufficient permissions (ecr:CreateRepository)"
+            echo "  - Repository name already exists"
+            echo "  - Invalid repository name format"
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Debug - Docker Build Context
+        working-directory: ${{ env.DOCKERFILE_PATH }}
+        run: |
+          echo "=========================================="
+          echo "Docker Build Context"
+          echo "=========================================="
+          echo "Working Directory: $(pwd)"
+          echo ""
+          echo "Files in build context:"
+          ls -lah
+          echo ""
+          echo "Checking for Dockerfile..."
+          if [ -f "Dockerfile" ]; then
+            echo "✅ Dockerfile found"
+            echo ""
+            echo "Dockerfile contents (first 20 lines):"
+            head -n 20 Dockerfile
+          else
+            echo "❌ Dockerfile not found!"
+            echo "Available files:"
+            find . -maxdepth 2 -type f
+          fi
+          echo ""
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
@@ -154,8 +292,10 @@ jobs:
           echo "Image Tag: $IMAGE_TAG"
           echo "Full Image: $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG"
           echo "Context: $(pwd)"
+          echo "Build Time: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           echo ""
           
+          echo "Starting Docker build..."
           docker build \
             --tag $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG \
             --tag $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }} \
@@ -164,10 +304,15 @@ jobs:
             --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
+            --progress=plain \
             .
           
           echo ""
           echo "✅ Docker image built successfully"
+          echo ""
+          echo "Verifying built images..."
+          docker images | grep "$ECR_REPO_NAME" || echo "⚠️ Image not found in local registry"
+          echo ""
 
       - name: Scan Docker Image for Vulnerabilities
         continue-on-error: true
@@ -197,18 +342,32 @@ jobs:
           echo ""
           echo "Target Repository: $ECR_REGISTRY/$ECR_REPO_NAME"
           echo "Region: ${{ inputs.ecr_region }}"
+          echo "Push Time: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           echo ""
           
           # Push with specified tag
           echo "Pushing: $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG"
-          docker push $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG
+          if docker push $ECR_REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG; then
+            echo "✅ Successfully pushed tag: $IMAGE_TAG"
+          else
+            echo "❌ Failed to push tag: $IMAGE_TAG"
+            exit 1
+          fi
+          
+          echo ""
           
           # Push with commit SHA tag
           echo "Pushing: $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}"
-          docker push $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}
+          if docker push $ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}; then
+            echo "✅ Successfully pushed tag: ${{ github.sha }}"
+          else
+            echo "❌ Failed to push tag: ${{ github.sha }}"
+            exit 1
+          fi
           
           echo ""
-          echo "✅ Docker images pushed successfully to ECR repository: $ECR_REPO_NAME"
+          echo "✅ All Docker images pushed successfully to ECR repository: $ECR_REPO_NAME"
+          echo ""
 
       - name: Get Image Details
         id: image-details
@@ -253,7 +412,71 @@ jobs:
           echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
           echo "Repository URI: $REPO_URI"
 
+      - name: Debug - Workflow Execution Summary
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "Workflow Execution Summary"
+          echo "=========================================="
+          echo ""
+          echo "Workflow Status: ${{ job.status }}"
+          echo "Execution Time: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run Number: ${{ github.run_number }}"
+          echo ""
+          echo "Key Steps Status:"
+          echo "  - User Authorization: ✅"
+          echo "  - Code Checkout: ✅"
+          echo "  - AWS Authentication: ${{ steps.aws-credentials.outcome }}"
+          echo "  - ECR Login: ${{ steps.login-ecr.outcome }}"
+          echo "  - Repository Check: ${{ steps.check-repo.outcome }}"
+          echo ""
+          echo "For detailed logs, check individual step outputs above."
+          echo ""
+
+      - name: Debug - Error Diagnostics
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "❌ Workflow Failed - Diagnostics"
+          echo "=========================================="
+          echo ""
+          echo "Common Issues and Solutions:"
+          echo ""
+          echo "1. OIDC Authentication Error:"
+          echo "   - Error: 'Not authorized to perform sts:AssumeRoleWithWebIdentity'"
+          echo "   - Solution: Run 'Setup GitHub OIDC Provider for AWS' workflow first"
+          echo "   - Verify: Repository must be K8-Team/api"
+          echo ""
+          echo "2. ECR Permission Error:"
+          echo "   - Error: 'AccessDeniedException' or 'UnauthorizedException'"
+          echo "   - Solution: Check IAM role has ECR permissions"
+          echo "   - Verify: Role 'ECR-image-api-repo-Role' has correct policy"
+          echo ""
+          echo "3. Docker Build Error:"
+          echo "   - Error: 'Dockerfile not found' or build failures"
+          echo "   - Solution: Check Dockerfile exists in repository root"
+          echo "   - Verify: DOCKERFILE_PATH environment variable is correct"
+          echo ""
+          echo "4. ECR Push Error:"
+          echo "   - Error: 'denied: Your authorization token has expired'"
+          echo "   - Solution: Re-run the workflow (token auto-refreshes)"
+          echo ""
+          echo "Debugging Commands:"
+          echo "  # Check OIDC provider"
+          echo "  aws iam list-open-id-connect-providers"
+          echo ""
+          echo "  # Check IAM role"
+          echo "  aws iam get-role --role-name ECR-image-api-repo-Role"
+          echo ""
+          echo "  # Check trust policy"
+          echo "  aws iam get-role --role-name ECR-image-api-repo-Role --query 'Role.AssumeRolePolicyDocument'"
+          echo ""
+          echo "For more help, see: OIDC_SETUP_GUIDE.md"
+          echo ""
+
       - name: Output Summary
+        if: success()
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
@@ -307,8 +530,50 @@ jobs:
           echo "#### Authentication Method" >> $GITHUB_STEP_SUMMARY
           echo "🔐 **OIDC Authentication** - Using IAM role: \`arn:aws:iam::841740285950:role/ECR-image-api-repo-Role\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Workflow Execution Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Number:** \`${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**AWS Account:** \`${{ steps.aws-credentials.outputs.aws-account-id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "1. Create Kubernetes secret for database credentials:" >> $GITHUB_STEP_SUMMARY
           echo "   \`kubectl create secret generic db-credentials --from-literal=username=YOUR_USER --from-literal=password=YOUR_PASSWORD\`" >> $GITHUB_STEP_SUMMARY
           echo "2. Deploy the application to your EKS cluster" >> $GITHUB_STEP_SUMMARY
           echo "3. Verify the deployment: \`kubectl get pods\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Output Failure Summary
+        if: failure()
+        run: |
+          echo "### ❌ Workflow Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Failure Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Number:** \`${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Check the 'Debug - Error Diagnostics' step** above for specific error details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "2. **If OIDC authentication failed:**" >> $GITHUB_STEP_SUMMARY
+          echo "   - Run the \`Setup GitHub OIDC Provider for AWS\` workflow" >> $GITHUB_STEP_SUMMARY
+          echo "   - Verify repository is: \`K8-Team/api\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - Check OIDC provider exists: \`aws iam list-open-id-connect-providers\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "3. **If ECR permissions failed:**" >> $GITHUB_STEP_SUMMARY
+          echo "   - Verify role exists: \`aws iam get-role --role-name ECR-image-api-repo-Role\`" >> $GITHUB_STEP_SUMMARY
+          echo "   - Check role has ECR policy attached" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "4. **If Docker build failed:**" >> $GITHUB_STEP_SUMMARY
+          echo "   - Check Dockerfile exists in repository root" >> $GITHUB_STEP_SUMMARY
+          echo "   - Review build logs in 'Build Docker Image' step" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Documentation" >> $GITHUB_STEP_SUMMARY
+          echo "- 📖 [Quick Fix Guide](QUICK_FIX.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📖 [OIDC Setup Guide](OIDC_SETUP_GUIDE.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📖 [K8-Team Specific Setup](SETUP_FOR_K8_TEAM.md)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
