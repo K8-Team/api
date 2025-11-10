@@ -153,12 +153,12 @@ jobs:
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag }}
           echo "Building image: $IMAGE_URI"
           
-          docker build -t ${{ inputs.image_name }} .
-          docker tag ${{ inputs.image_name }}:latest $IMAGE_URI
-          docker tag ${{ inputs.image_name }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
+          docker build -t ${{ inputs.image_name }}:${{ inputs.image_tag }} .
+          docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} $IMAGE_URI
+          docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
           
           echo "✅ Build successful"
-          echo "Local image: ${{ inputs.image_name }}:latest"
+          echo "Local image: ${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "ECR image: $IMAGE_URI"
           echo "ECR SHA tag: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}"
 
@@ -171,7 +171,7 @@ jobs:
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \
             --no-progress \
-            ${{ inputs.image_name }}:latest || echo "⚠️ Vulnerabilities found (continuing anyway)"
+            ${{ inputs.image_name }}:${{ inputs.image_tag }} || echo "⚠️ Vulnerabilities found (continuing anyway)"
 
       - name: Push Docker Image to ECR
         run: |
