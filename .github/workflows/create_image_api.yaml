@@ -3,17 +3,6 @@ name: Build and Push Docker Image to ECR
 on:
   workflow_dispatch:
     inputs:
-      ecr_region:
-        description: "AWS region for ECR repository"
-        required: true
-        type: choice
-        options:
-          - us-east-1
-          - us-east-2
-          - us-west-1
-          - us-west-2
-          - ca-central-1
-        default: us-east-1
       image_name:
         description: "Docker image name"
         required: true
@@ -24,11 +13,22 @@ on:
         required: true
         type: string
         default: "latest"
+      ecr_region:
+        description: "AWS region for ECR repository"
+        required: true
+        type: choice
+        options:
+          - us-east-1
+          - us-east-2
+          - us-west-1
+          - us-west-2
+          - ca-central-1
+        default: us-east-1      
       ecr_repository_name:
         description: "ECR repository name"
         required: true
         type: string
-        default: "nodejs-nyan-app-repo"
+        default: "nodejs-nyan-app"
 
 env:
   DOCKERFILE_PATH: '.'
