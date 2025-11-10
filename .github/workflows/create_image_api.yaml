@@ -9,12 +9,12 @@ on:
         type: string
         default: "nodejs-nyan-app"
       image_name:
-        description: "Image name suffix (e.g., api, web) - will create repo: <ecr_repository_name>-<image_name>"
+        description: "Local Docker image name (e.g., api, web, myapp)"
         required: true
         type: string
         default: "api"
       image_tag:
-        description: "Image tag (e.g., latest, 1.0.0, dev)"
+        description: "Image tag to push to ECR (e.g., latest, 1.0.0, dev)"
         required: true
         type: string
         default: "latest"
@@ -45,13 +45,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set Full Repository Name
-        id: repo-name
-        run: |
-          FULL_REPO_NAME="${{ inputs.ecr_repository_name }}-${{ inputs.image_name }}"
-          echo "full_name=$FULL_REPO_NAME" >> $GITHUB_OUTPUT
-          echo "Full ECR repository name: $FULL_REPO_NAME"
 
       - name: Debug - GitHub Context
         run: |
@@ -113,7 +106,7 @@ jobs:
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
-          REPO_NAME="${{ steps.repo-name.outputs.full_name }}"
+          REPO_NAME="${{ inputs.ecr_repository_name }}"
           echo "Checking repository: $REPO_NAME"
           
           if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ inputs.ecr_region }} 2>/dev/null; then
@@ -127,7 +120,7 @@ jobs:
       - name: Create ECR Repository
         if: steps.check-repo.outputs.exists == 'false'
         run: |
-          REPO_NAME="${{ steps.repo-name.outputs.full_name }}"
+          REPO_NAME="${{ inputs.ecr_repository_name }}"
           echo "Creating repository: $REPO_NAME"
           
           aws ecr create-repository \
@@ -156,32 +149,21 @@ jobs:
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          FULL_REPO_NAME: ${{ steps.repo-name.outputs.full_name }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          echo "Building: $ECR_REGISTRY/$FULL_REPO_NAME:$IMAGE_TAG"
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag }}
+          echo "Building image: $IMAGE_URI"
           
-          docker build \
-            --tag $ECR_REGISTRY/$FULL_REPO_NAME:$IMAGE_TAG \
-            --tag $ECR_REGISTRY/$FULL_REPO_NAME:${{ github.sha }} \
-            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
-            --build-arg VCS_REF=${{ github.sha }} \
-            --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-            --label "org.opencontainers.image.revision=${{ github.sha }}" \
-            --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
-            .
+          docker build -t ${{ inputs.image_name }} .
+          docker tag ${{ inputs.image_name }}:latest $IMAGE_URI
+          docker tag ${{ inputs.image_name }}:latest ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
           
           echo "✅ Build successful"
+          echo "Local image: ${{ inputs.image_name }}:latest"
+          echo "ECR image: $IMAGE_URI"
+          echo "ECR SHA tag: ${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}"
 
       - name: Scan Docker Image for Vulnerabilities
         continue-on-error: true
-        working-directory: ${{ env.DOCKERFILE_PATH }}
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          FULL_REPO_NAME: ${{ steps.repo-name.outputs.full_name }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "Scanning image for vulnerabilities..."
           docker run --rm \
@@ -189,31 +171,27 @@ jobs:
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \
             --no-progress \
-            $ECR_REGISTRY/$FULL_REPO_NAME:$IMAGE_TAG || echo "⚠️ Vulnerabilities found (continuing anyway)"
+            ${{ inputs.image_name }}:latest || echo "⚠️ Vulnerabilities found (continuing anyway)"
 
       - name: Push Docker Image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          FULL_REPO_NAME: ${{ steps.repo-name.outputs.full_name }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          echo "Pushing: $ECR_REGISTRY/$FULL_REPO_NAME:$IMAGE_TAG"
-          docker push $ECR_REGISTRY/$FULL_REPO_NAME:$IMAGE_TAG
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ inputs.image_tag }}
+          docker push $IMAGE_URI
+          echo "✅ Successfully pushed: $IMAGE_URI"
           
-          echo "Pushing: $ECR_REGISTRY/$FULL_REPO_NAME:${{ github.sha }}"
-          docker push $ECR_REGISTRY/$FULL_REPO_NAME:${{ github.sha }}
-          
-          echo "✅ Push successful"
+          IMAGE_URI_SHA=${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository_name }}:${{ github.sha }}
+          docker push $IMAGE_URI_SHA
+          echo "✅ Successfully pushed: $IMAGE_URI_SHA"
 
       - name: Get Image Details
         id: image-details
         env:
-          FULL_REPO_NAME: ${{ steps.repo-name.outputs.full_name }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
           ECR_REGION: ${{ inputs.ecr_region }}
         run: |
           IMAGE_DIGEST=$(aws ecr describe-images \
-            --repository-name $FULL_REPO_NAME \
+            --repository-name $ECR_REPO_NAME \
             --image-ids imageTag=$IMAGE_TAG \
             --region $ECR_REGION \
             --query 'imageDetails[0].imageDigest' \
@@ -221,7 +199,7 @@ jobs:
           echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
           
           IMAGE_SIZE=$(aws ecr describe-images \
-            --repository-name $FULL_REPO_NAME \
+            --repository-name $ECR_REPO_NAME \
             --image-ids imageTag=$IMAGE_TAG \
             --region $ECR_REGION \
             --query 'imageDetails[0].imageSizeInBytes' \
@@ -230,7 +208,7 @@ jobs:
           echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           
           REPO_URI=$(aws ecr describe-repositories \
-            --repository-names $FULL_REPO_NAME \
+            --repository-names $ECR_REPO_NAME \
             --region $ECR_REGION \
             --query 'repositories[0].repositoryUri' \
             --output text)
@@ -261,15 +239,15 @@ jobs:
         if: success()
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          FULL_REPO_NAME: ${{ steps.repo-name.outputs.full_name }}
+          ECR_REPO_NAME: ${{ inputs.ecr_repository_name }}
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### ECR Repository Details" >> $GITHUB_STEP_SUMMARY
-          echo "**ECR Repository Name:** \`$FULL_REPO_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Base Repository:** \`${{ inputs.ecr_repository_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**ECR Repository Name:** \`$ECR_REPO_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Local Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "**Repository URI:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** \`${{ inputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Repository Status:** \`${{ steps.check-repo.outputs.exists == 'false' && '✅ Created by workflow' || '✅ Already existed' }}\`" >> $GITHUB_STEP_SUMMARY
