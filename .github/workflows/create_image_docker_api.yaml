@@ -8,10 +8,10 @@ on:
         required: true
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
-          - none
         default: "patch"
       push_on_test_failure:
         description: "Push image even if tests fail?"
