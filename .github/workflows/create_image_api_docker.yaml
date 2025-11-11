@@ -1,4 +1,4 @@
-name: Build  Docker Hub
+name: Build Docker Hub (Enhanced)
 
 on:
   workflow_dispatch:
@@ -33,6 +33,10 @@ on:
         default: "yes"
 
 jobs:
+  # ============================================
+  # PRE-BUILD TESTS
+  # ============================================
+  
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -138,10 +142,115 @@ jobs:
           dockerfile: Dockerfile
           failure-threshold: warning
 
+  # NEW: Dependency validation
+  dependency-check:
+    name: Dependency Validation
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Validate package.json
+        run: |
+          echo "=== Validating package.json ==="
+          if [ -f "package.json" ]; then
+            if jq empty package.json 2>/dev/null; then
+              echo "✅ package.json is valid JSON"
+            else
+              echo "❌ package.json is invalid JSON"
+              exit 1
+            fi
+          else
+            echo "❌ package.json not found"
+            exit 1
+          fi
+      
+      - name: Check for outdated dependencies
+        run: |
+          echo "=== Checking for outdated dependencies ==="
+          npm install
+          npm outdated || echo "⚠️ Some dependencies are outdated"
+      
+      - name: Check for duplicate dependencies
+        run: |
+          echo "=== Checking for duplicate dependencies ==="
+          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies found"
+
+  # NEW: License compliance check
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: npm install
+      
+      - name: Install license-checker
+        run: npm install -g license-checker
+      
+      - name: Check licenses (Summary)
+        run: |
+          echo "=== License Summary ==="
+          license-checker --summary
+      
+      - name: Check licenses (Detailed)
+        run: |
+          echo "=== Detailed License Report ==="
+          license-checker --json > licenses.json
+          cat licenses.json
+      
+      - name: Check for prohibited licenses
+        run: |
+          echo "=== Checking for Prohibited Licenses ==="
+          
+          # Define prohibited licenses (GPL variants that may cause issues)
+          PROHIBITED="GPL|AGPL|LGPL"
+          
+          if license-checker --json | jq -r '.[] | .licenses' | grep -iE "$PROHIBITED"; then
+            echo "⚠️ WARNING: Found potentially problematic licenses (GPL family)"
+            echo "Review these licenses for compatibility with your project"
+            license-checker --json | jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL"; "i")) | "\(.key): \(.value.licenses)"'
+          else
+            echo "✅ No prohibited licenses found"
+          fi
+      
+      - name: Generate license report
+        run: |
+          echo "=== Generating License Report ==="
+          license-checker --csv > license-report.csv
+          echo "✅ License report generated"
+      
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: |
+            licenses.json
+            license-report.csv
+          retention-days: 30
+
+  # ============================================
+  # BUILD IMAGE
+  # ============================================
+  
   build-image:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, security, dockerfile-lint]
+    needs: [lint, unit-tests, integration-tests, security, dockerfile-lint, dependency-check, license-check]
     if: ${{ always() }}
     environment: dev
     permissions:
@@ -221,6 +330,8 @@ jobs:
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Dockerfile Lint: ${{ needs.dockerfile-lint.result }}"
+          echo "Dependency Check: ${{ needs.dependency-check.result }}"
+          echo "License Check: ${{ needs.license-check.result }}"
           echo "Push on failure: ${{ inputs.push_on_test_failure }}"
           
           if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
@@ -255,6 +366,41 @@ jobs:
           name: docker-image
           path: /tmp/docker-image.tar.gz
           retention-days: 1
+
+  # ============================================
+  # POST-BUILD TESTS
+  # ============================================
+
+  # NEW: Vulnerability scan with Trivy
+  test-image-vulnerabilities:
+    name: Scan Image Vulnerabilities
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}'
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
   test-image-health:
     name: Test Image Health
@@ -387,10 +533,226 @@ jobs:
             echo "✅ Image size is acceptable"
           fi
 
+  # NEW: Port exposure test
+  test-image-ports:
+    name: Test Port Exposure
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Check Exposed Ports
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking Exposed Ports ==="
+          EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
+          echo "Exposed ports: $EXPOSED_PORTS"
+          
+          if echo "$EXPOSED_PORTS" | grep -q "3000"; then
+            echo "✅ Port 3000 is exposed"
+          else
+            echo "❌ Port 3000 is not exposed"
+            exit 1
+          fi
+
+  # NEW: Environment variables test
+  test-image-env-vars:
+    name: Test Environment Variables
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test with Missing Environment Variables
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing with Missing Env Vars ==="
+          docker run -d --name env-test -p 3002:3000 $IMAGE_URI || true
+          
+          sleep 3
+          
+          # Check if container is still running or exited gracefully
+          if docker ps -a | grep env-test | grep -q "Exited"; then
+            echo "⚠️ Container exited (expected if env vars are required)"
+            docker logs env-test
+          else
+            echo "✅ Container handles missing env vars gracefully"
+          fi
+          
+          docker stop env-test 2>/dev/null || true
+          docker rm env-test 2>/dev/null || true
+
+  # NEW: User permissions test
+  test-image-security:
+    name: Test Security (Non-root User)
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Check User Permissions
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking User Permissions ==="
+          USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
+          
+          if [ -z "$USER" ] || [ "$USER" = "root" ] || [ "$USER" = "0" ]; then
+            echo "⚠️ Container runs as root user (security risk)"
+          else
+            echo "✅ Container runs as non-root user: $USER"
+          fi
+
+  # NEW: Graceful shutdown test
+  test-image-shutdown:
+    name: Test Graceful Shutdown
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test SIGTERM Handling
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Graceful Shutdown ==="
+          docker run -d --name shutdown-test \
+            -p 3003:3000 \
+            -e DBUSER=testuser \
+            -e DB=testdb \
+            -e DBPASS=testpass \
+            -e DBHOST=localhost \
+            -e DBPORT=3306 \
+            $IMAGE_URI
+          
+          sleep 3
+          
+          echo "Sending SIGTERM..."
+          START_TIME=$(date +%s)
+          docker stop -t 10 shutdown-test
+          END_TIME=$(date +%s)
+          SHUTDOWN_TIME=$((END_TIME - START_TIME))
+          
+          echo "Shutdown time: ${SHUTDOWN_TIME}s"
+          
+          if [ $SHUTDOWN_TIME -lt 10 ]; then
+            echo "✅ Container shut down gracefully in ${SHUTDOWN_TIME}s"
+          else
+            echo "⚠️ Container took full timeout (10s) to shutdown"
+          fi
+          
+          docker rm shutdown-test
+
+  # NEW: Layer analysis
+  test-image-layers:
+    name: Analyze Image Layers
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    if: ${{ always() && needs.build-image.result == 'success' }}
+    continue-on-error: true
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Analyze Image Layers
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Analyzing Image Layers ==="
+          docker history $IMAGE_URI
+          
+          LAYER_COUNT=$(docker history $IMAGE_URI --format "{{.ID}}" | wc -l)
+          echo "Total layers: $LAYER_COUNT"
+          
+          if [ $LAYER_COUNT -gt 20 ]; then
+            echo "⚠️ Image has many layers ($LAYER_COUNT), consider optimization"
+          else
+            echo "✅ Layer count is reasonable"
+          fi
+
+  # ============================================
+  # PUSH IMAGE
+  # ============================================
+
   push-image:
     name: Push Docker Image
     runs-on: ubuntu-latest
-    needs: [build-image, test-image-health, test-image-startup, test-image-size]
+    needs: [
+      build-image, 
+      test-image-vulnerabilities,
+      test-image-health, 
+      test-image-startup, 
+      test-image-size,
+      test-image-ports,
+      test-image-env-vars,
+      test-image-security,
+      test-image-shutdown,
+      test-image-layers
+    ]
     if: ${{ always() && needs.build-image.result == 'success' && (inputs.push_on_test_failure == 'yes' || (needs.test-image-health.result == 'success' && needs.test-image-startup.result == 'success' && needs.test-image-size.result == 'success')) }}
     environment: dev
     
@@ -425,9 +787,15 @@ jobs:
       - name: Check Image Test Results
         run: |
           echo "=== Image Test Results Summary ==="
+          echo "Vulnerabilities: ${{ needs.test-image-vulnerabilities.result }}"
           echo "Health Test: ${{ needs.test-image-health.result }}"
           echo "Startup Test: ${{ needs.test-image-startup.result }}"
           echo "Size Test: ${{ needs.test-image-size.result }}"
+          echo "Ports Test: ${{ needs.test-image-ports.result }}"
+          echo "Env Vars Test: ${{ needs.test-image-env-vars.result }}"
+          echo "Security Test: ${{ needs.test-image-security.result }}"
+          echo "Shutdown Test: ${{ needs.test-image-shutdown.result }}"
+          echo "Layers Test: ${{ needs.test-image-layers.result }}"
           echo "Push on failure: ${{ inputs.push_on_test_failure }}"
           
           if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
