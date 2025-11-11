@@ -1,4 +1,4 @@
-name: Build and Push Docker Image to ECR (Enhanced)
+name: Build and Push Docker Image to ECR
 
 on:
   workflow_dispatch:
