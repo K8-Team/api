@@ -47,17 +47,12 @@ jobs:
         if: inputs.version_bump != 'none'
         run: |
           FULL_IMAGE_NAME="${{ inputs.dockerhub_username }}/${{ inputs.image_name }}"
-          echo "Fetching tags from Docker Hub for: $FULL_IMAGE_NAME"
-          
-          # Get all tags from Docker Hub (looking for v-prefixed versions)
           TAGS=$(curl -s "https://hub.docker.com/v2/repositories/$FULL_IMAGE_NAME/tags/?page_size=100" | jq -r '.results[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
           
           if [ -z "$TAGS" ]; then
-            echo "No version tags found, starting with 0.0.0"
             LATEST_VERSION="0.0.0"
           else
             LATEST_VERSION="$TAGS"
-            echo "Latest version found: v$LATEST_VERSION"
           fi
           
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
@@ -67,12 +62,8 @@ jobs:
         if: inputs.version_bump != 'none'
         run: |
           LATEST_VERSION="${{ steps.get-version.outputs.latest_version }}"
-          echo "Current version: v$LATEST_VERSION"
-          
-          # Split version into parts
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
           
-          # Bump based on input
           case "${{ inputs.version_bump }}" in
             major)
               MAJOR=$((MAJOR + 1))
@@ -89,7 +80,6 @@ jobs:
           esac
           
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
-          echo "New version: $NEW_VERSION"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Set version tag and full image name
@@ -100,21 +90,10 @@ jobs:
           
           if [ "${{ inputs.version_bump }}" = "none" ]; then
             VERSION_TAG="latest"
-            echo "Using latest tag only"
           else
             VERSION_TAG="${{ steps.bump.outputs.new_version }}"
-            echo "Using bumped version: $VERSION_TAG"
           fi
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
-          echo "Full image name: $FULL_IMAGE_NAME"
-          echo "Version tag: $VERSION_TAG"
-
-      - name: Debug - GitHub Context
-        run: |
-          echo "Repository: ${{ github.repository }}"
-          echo "Actor: ${{ github.actor }}"
-          echo "Run ID: ${{ github.run_id }}"
-          echo "SHA: ${{ github.sha }}"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -122,28 +101,8 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Debug - Docker Hub Login
-        run: |
-          echo "✅ Docker Hub login successful"
-          echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
-          echo "Docker Hub username input: ${{ inputs.dockerhub_username }}"
-          echo "Image name: ${{ inputs.image_name }}"
-          echo "Version bump: ${{ inputs.version_bump }}"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Debug - Docker Build Context
-        working-directory: ${{ env.DOCKERFILE_PATH }}
-        run: |
-          echo "Build context: $(pwd)"
-          if [ -f "Dockerfile" ]; then
-            echo "✅ Dockerfile found"
-          else
-            echo "❌ Dockerfile not found!"
-            ls -la
-            exit 1
-          fi
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
@@ -151,173 +110,17 @@ jobs:
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
           IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
-          echo "Building image: $IMAGE_URI"
           
           docker build -t $IMAGE_URI .
-          
-          # Always tag as latest
           docker tag $IMAGE_URI $FULL_IMAGE_NAME:latest
-          echo "Tagged as latest"
-          
-          echo "✅ Build successful"
-          echo "Docker Hub image: $IMAGE_URI"
-          echo "Docker Hub latest: $FULL_IMAGE_NAME:latest"
-
-      - name: Scan Docker Image for Vulnerabilities
-        continue-on-error: true
-        run: |
-          VERSION_TAG="${{ steps.version.outputs.tag }}"
-          FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
-          IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
-          echo "Scanning image for vulnerabilities..."
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-            --severity HIGH,CRITICAL \
-            --no-progress \
-            $IMAGE_URI || echo "⚠️ Vulnerabilities found (continuing anyway)"
 
       - name: Push Docker Image to Docker Hub
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
           
-          # Push version tag (or latest if version_bump is none)
-          IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
-          docker push $IMAGE_URI
-          echo "✅ Successfully pushed: $IMAGE_URI"
+          docker push $FULL_IMAGE_NAME:$VERSION_TAG
           
-          # Always push latest tag (unless version_bump is none, then it's already latest)
           if [ "${{ inputs.version_bump }}" != "none" ]; then
-            LATEST_URI=$FULL_IMAGE_NAME:latest
-            docker push $LATEST_URI
-            echo "✅ Successfully pushed: $LATEST_URI"
+            docker push $FULL_IMAGE_NAME:latest
           fi
-
-      - name: Get Image Details
-        id: image-details
-        run: |
-          VERSION_TAG="${{ steps.version.outputs.tag }}"
-          FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
-          IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
-          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
-          echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
-          
-          # Get image size from local Docker
-          IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
-          IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
-          echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
-          
-          echo "✅ Image details retrieved"
-
-      - name: Debug - Workflow Summary
-        if: always()
-        run: |
-          echo "Workflow Status: ${{ job.status }}"
-          echo "Run ID: ${{ github.run_id }}"
-
-      - name: Debug - Error Diagnostics
-        if: failure()
-        run: |
-          echo "❌ Workflow Failed"
-          echo ""
-          echo "Common issues:"
-          echo "1. Docker Hub Auth: Check DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets"
-          echo "2. Docker Build: Verify Dockerfile exists in repository root"
-          echo "3. Repository Name: Ensure format is 'username/repository'"
-
-      - name: Output Summary
-        if: success()
-        env:
-          IMAGE_URI: ${{ steps.image-details.outputs.image_uri }}
-          FULL_IMAGE_NAME: ${{ steps.version.outputs.full_image_name }}
-          VERSION_TAG: ${{ steps.image-details.outputs.version_tag }}
-          DOCKERHUB_USERNAME: ${{ inputs.dockerhub_username }}
-          IMAGE_NAME: ${{ inputs.image_name }}
-        run: |
-          echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Docker Hub Image Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Full Image Name:** \`$FULL_IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker Hub Username:** \`$DOCKERHUB_USERNAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Version Tag:** \`$VERSION_TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Latest Tag:** \`$FULL_IMAGE_NAME:latest\` ✅" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker Hub URL:** https://hub.docker.com/r/$FULL_IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Pull Commands" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ inputs.version_bump }}" != "none" ]; then
-            echo "# Pull with version tag" >> $GITHUB_STEP_SUMMARY
-            echo "docker pull $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $FULL_IMAGE_NAME:latest" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "Use this image in your Kubernetes deployment:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
-          echo "spec:" >> $GITHUB_STEP_SUMMARY
-          echo "  containers:" >> $GITHUB_STEP_SUMMARY
-          echo "  - name: app" >> $GITHUB_STEP_SUMMARY
-          echo "    image: $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
-          echo "    env:" >> $GITHUB_STEP_SUMMARY
-          echo "    - name: DB_USER" >> $GITHUB_STEP_SUMMARY
-          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
-          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
-          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
-          echo "          key: username" >> $GITHUB_STEP_SUMMARY
-          echo "    - name: DB_PASSWORD" >> $GITHUB_STEP_SUMMARY
-          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
-          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
-          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
-          echo "          key: password" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Authentication Method" >> $GITHUB_STEP_SUMMARY
-          echo "🔐 **Docker Hub Token** - Using credentials from GitHub Secrets" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Workflow Execution Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Run Number:** \`${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. Create Kubernetes secret for database credentials:" >> $GITHUB_STEP_SUMMARY
-          echo "   \`kubectl create secret generic db-credentials --from-literal=username=YOUR_USER --from-literal=password=YOUR_PASSWORD\`" >> $GITHUB_STEP_SUMMARY
-          echo "2. Deploy the application to your EKS cluster" >> $GITHUB_STEP_SUMMARY
-          echo "3. Verify the deployment: \`kubectl get pods\`" >> $GITHUB_STEP_SUMMARY
-
-      - name: Output Failure Summary
-        if: failure()
-        run: |
-          echo "### ❌ Workflow Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Failure Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Run Number:** \`${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "1. **Check the 'Debug - Error Diagnostics' step** above for specific error details" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "2. **If Docker Hub authentication failed:**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Verify \`DOCKERHUB_USERNAME\` secret is set in GitHub repository settings" >> $GITHUB_STEP_SUMMARY
-          echo "   - Verify \`DOCKERHUB_TOKEN\` secret is set (use access token, not password)" >> $GITHUB_STEP_SUMMARY
-          echo "   - Create token at: https://hub.docker.com/settings/security" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "3. **If Docker build failed:**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Check Dockerfile exists in repository root" >> $GITHUB_STEP_SUMMARY
-          echo "   - Review build logs in 'Build Docker Image' step" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "4. **If Docker push failed:**" >> $GITHUB_STEP_SUMMARY
-          echo "   - Verify repository name format: \`username/repository\`" >> $GITHUB_STEP_SUMMARY
-          echo "   - Ensure repository exists on Docker Hub or account has permission to create it" >> $GITHUB_STEP_SUMMARY
-
