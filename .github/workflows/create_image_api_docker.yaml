@@ -42,29 +42,55 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Debug - Show existing tags
+      - name: Get latest version from Docker Hub
+        id: get-version
+        if: inputs.version_bump != 'none'
         run: |
-          echo "Existing Git tags:"
-          git tag -l
-          echo ""
-          echo "Latest tag:"
-          git describe --tags --abbrev=0 2>/dev/null || echo "No tags found"
+          FULL_IMAGE_NAME="${{ inputs.dockerhub_username }}/${{ inputs.image_name }}"
+          echo "Fetching tags from Docker Hub for: $FULL_IMAGE_NAME"
+          
+          # Get all tags from Docker Hub
+          TAGS=$(curl -s "https://hub.docker.com/v2/repositories/$FULL_IMAGE_NAME/tags/?page_size=100" | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          
+          if [ -z "$TAGS" ]; then
+            echo "No version tags found, starting with 0.0.0"
+            LATEST_VERSION="0.0.0"
+          else
+            LATEST_VERSION="$TAGS"
+            echo "Latest version found: $LATEST_VERSION"
+          fi
+          
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Bump version and create Git tag
+      - name: Bump version
         id: bump
         if: inputs.version_bump != 'none'
-        uses: anothrNick/github-tag-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true
-          DEFAULT_BUMP: ${{ inputs.version_bump }}
-          DRY_RUN: false
-
-      - name: Debug - Show new tag
-        if: inputs.version_bump != 'none'
         run: |
-          echo "New tag created: ${{ steps.bump.outputs.new_tag }}"
-          echo "Previous tag: ${{ steps.bump.outputs.tag }}"
+          LATEST_VERSION="${{ steps.get-version.outputs.latest_version }}"
+          echo "Current version: $LATEST_VERSION"
+          
+          # Split version into parts
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+          
+          # Bump based on input
+          case "${{ inputs.version_bump }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "New version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
       - name: Set version tag and full image name
         id: version
@@ -76,7 +102,7 @@ jobs:
             VERSION_TAG="latest"
             echo "Using latest tag only"
           else
-            VERSION_TAG="${{ steps.bump.outputs.new_tag }}"
+            VERSION_TAG="${{ steps.bump.outputs.new_version }}"
             echo "Using bumped version: $VERSION_TAG"
           fi
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
