@@ -37,9 +37,6 @@ jobs:
     name: Security & Vulnerability Scan
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
-    defaults:
-      run:
-        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -70,9 +67,6 @@ jobs:
     name: Linting
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
-    defaults:
-      run:
-        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -101,9 +95,6 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
-    defaults:
-      run:
-        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -126,9 +117,6 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
-    defaults:
-      run:
-        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -151,9 +139,6 @@ jobs:
     name: Type Checking
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
-    defaults:
-      run:
-        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -184,7 +169,7 @@ jobs:
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: NodeJsapp/Dockerfile
+          dockerfile: Dockerfile
           failure-threshold: warning
 
   build-image:
@@ -280,7 +265,6 @@ jobs:
           fi
 
       - name: Build Docker Image
-        working-directory: NodeJsapp
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
