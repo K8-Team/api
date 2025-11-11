@@ -47,7 +47,7 @@ jobs:
           node-version: '18'
       
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       
       - name: Run ESLint
         run: |
@@ -71,7 +71,7 @@ jobs:
           node-version: '18'
       
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       
       - name: Run Unit Tests
         run: |
@@ -95,7 +95,7 @@ jobs:
           node-version: '18'
       
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       
       - name: Run Integration Tests
         run: |
@@ -119,7 +119,7 @@ jobs:
           node-version: '18'
       
       - name: Install dependencies
-        run: npm ci
+        run: npm install
       
       - name: Run npm audit
         run: npm audit --audit-level=moderate || true
@@ -407,6 +407,15 @@ jobs:
           docker load < /tmp/docker-image.tar.gz
           echo "✅ Image loaded"
 
+      - name: Tag Image as Latest
+        run: |
+          VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
+          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
+          
+          echo "=== Tagging image as latest ==="
+          docker tag $FULL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:latest
+          echo "✅ Tagged as latest"
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -433,10 +442,11 @@ jobs:
           FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
           
           echo "=== Pushing Docker Image ==="
+          
+          # Push version tag
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
           echo "✅ Pushed: $FULL_IMAGE_NAME:$VERSION_TAG"
           
-          if [ "${{ inputs.version_bump }}" != "none" ]; then
-            docker push $FULL_IMAGE_NAME:latest
-            echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
-          fi
+          # Always push latest tag
+          docker push $FULL_IMAGE_NAME:latest
+          echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
