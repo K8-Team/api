@@ -3,21 +3,16 @@ name: Build and Push Docker Image to Docker Hub
 on:
   workflow_dispatch:
     inputs:
-      dockerhub_repository:
-        description: "Docker Hub repository name (MUST include username, e.g., myusername/nodejs-app)"
-        required: true
-        type: string
-        default: "liken01else/nodejs-nyan-app"
       image_name:
-        description: "Local Docker image name (e.g., api, web, myapp)"
+        description: "Docker Hub image/repository name (MUST include username, e.g., myusername/mywordpress)"
         required: true
         type: string
-        default: "api"
+        default: "liken01else/mywordpress"
       image_tag:
-        description: "Image tag to push to Docker Hub (e.g., latest, 1.0.0, dev)"
+        description: "Image tag (e.g., latest, 1.0.0, dev)"
         required: true
         type: string
-        default: "latest"
+        default: "1.0.0"
         
 env:
   DOCKERFILE_PATH: '.'
@@ -49,12 +44,12 @@ jobs:
         run: |
           echo "✅ Docker Hub login successful"
           echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
-          echo "Repository: ${{ inputs.dockerhub_repository }}"
+          echo "Image: ${{ inputs.image_name }}:${{ inputs.image_tag }}"
           
-          # Validate repository format
-          if [[ ! "${{ inputs.dockerhub_repository }}" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
-            echo "❌ ERROR: Repository name must be in format 'username/repository'"
-            echo "Current value: ${{ inputs.dockerhub_repository }}"
+          # Validate image name format
+          if [[ ! "${{ inputs.image_name }}" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+            echo "❌ ERROR: Image name must be in format 'username/repository'"
+            echo "Current value: ${{ inputs.image_name }}"
             exit 1
           fi
           echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
@@ -77,46 +72,40 @@ jobs:
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          IMAGE_URI=${{ inputs.dockerhub_repository }}:${{ inputs.image_tag }}
+          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
           echo "Building image: $IMAGE_URI"
           
-          docker build -t ${{ inputs.image_name }}:${{ inputs.image_tag }} .
-          docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} $IMAGE_URI
-          docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} ${{ inputs.dockerhub_repository }}:${{ github.sha }}
+          docker build -t $IMAGE_URI .
           
           echo "✅ Build successful"
-          echo "Local image: ${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "Docker Hub image: $IMAGE_URI"
-          echo "Docker Hub SHA tag: ${{ inputs.dockerhub_repository }}:${{ github.sha }}"
 
       - name: Scan Docker Image for Vulnerabilities
         continue-on-error: true
         run: |
+          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
           echo "Scanning image for vulnerabilities..."
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \
             --no-progress \
-            ${{ inputs.image_name }}:${{ inputs.image_tag }} || echo "⚠️ Vulnerabilities found (continuing anyway)"
+            $IMAGE_URI || echo "⚠️ Vulnerabilities found (continuing anyway)"
 
       - name: Push Docker Image to Docker Hub
         run: |
-          IMAGE_URI=${{ inputs.dockerhub_repository }}:${{ inputs.image_tag }}
+          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
           docker push $IMAGE_URI
           echo "✅ Successfully pushed: $IMAGE_URI"
-          
-          IMAGE_URI_SHA=${{ inputs.dockerhub_repository }}:${{ github.sha }}
-          docker push $IMAGE_URI_SHA
-          echo "✅ Successfully pushed: $IMAGE_URI_SHA"
 
       - name: Get Image Details
         id: image-details
         run: |
-          echo "repo_uri=${{ inputs.dockerhub_repository }}" >> $GITHUB_OUTPUT
+          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
           
           # Get image size from local Docker
-          IMAGE_SIZE=$(docker image inspect ${{ inputs.image_name }}:${{ inputs.image_tag }} --format='{{.Size}}')
+          IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
           echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           
@@ -141,30 +130,22 @@ jobs:
       - name: Output Summary
         if: success()
         env:
-          DOCKERHUB_REPO: ${{ inputs.dockerhub_repository }}
+          IMAGE_URI: ${{ steps.image-details.outputs.image_uri }}
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Docker Hub Repository Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker Hub Repository:** \`$DOCKERHUB_REPO\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Local Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Docker Hub URL:** https://hub.docker.com/r/$DOCKERHUB_REPO" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "#### Docker Hub Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Full Image URI:** \`$IMAGE_URI\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit SHA Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Hub URL:** https://hub.docker.com/r/$IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
           echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Pull Command" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "# Pull with tag" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $DOCKERHUB_REPO:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Pull with commit SHA" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $DOCKERHUB_REPO:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
@@ -172,8 +153,8 @@ jobs:
           echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
           echo "spec:" >> $GITHUB_STEP_SUMMARY
           echo "  containers:" >> $GITHUB_STEP_SUMMARY
-          echo "  - name: $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "    image: $DOCKERHUB_REPO:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: app" >> $GITHUB_STEP_SUMMARY
+          echo "    image: $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
           echo "    env:" >> $GITHUB_STEP_SUMMARY
           echo "    - name: DB_USER" >> $GITHUB_STEP_SUMMARY
           echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
