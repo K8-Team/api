@@ -1,4 +1,4 @@
-name: Build to Docker Hub
+name: Build and Push Docker Image to Docker Hub
 
 on:
   workflow_dispatch:
@@ -23,29 +23,8 @@ on:
           - major
           - none
         default: "patch"
-        
+
 jobs:
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: NodeJsapp/package-lock.json
-
-      - name: Install Dependencies
-        working-directory: NodeJsapp
-        run: |
-          echo "Installing dependencies..."
-          npm ci
-          echo "✅ Dependencies installed"
-
   syntax-check:
     name: Syntax Check
     runs-on: ubuntu-latest
