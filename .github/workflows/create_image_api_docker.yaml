@@ -65,17 +65,14 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
-        working-directory: NodeJsapp
         run: |
           echo "=== Installing Dependencies ==="
           npm ci
           echo "✅ Dependencies installed"
 
       - name: Run Security Audit
-        working-directory: NodeJsapp
         run: |
           echo "=== Running npm audit ==="
           npm audit --audit-level=moderate || echo "⚠️ Vulnerabilities found but continuing"
@@ -94,24 +91,20 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
-        working-directory: NodeJsapp
         run: |
           echo "=== Installing Dependencies ==="
           npm ci
           echo "✅ Dependencies installed"
 
       - name: Check for Outdated Dependencies
-        working-directory: NodeJsapp
         run: |
           echo "=== Checking for Outdated Dependencies ==="
           npm outdated || true
           echo "=== Dependency check complete ==="
 
       - name: Validate Package.json
-        working-directory: NodeJsapp
         run: |
           echo "=== Validating package.json ==="
           npm pkg fix
@@ -131,7 +124,6 @@ jobs:
           node-version: '18'
 
       - name: Check Code Structure
-        working-directory: NodeJsapp
         run: |
           echo "=== Checking Code Structure ==="
           echo "Files in project:"
@@ -147,7 +139,6 @@ jobs:
           echo "=== Code structure check complete ==="
 
       - name: Check for Common Issues
-        working-directory: NodeJsapp
         run: |
           echo "=== Checking for Common Issues ==="
           
@@ -175,11 +166,10 @@ jobs:
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: NodeJsapp/Dockerfile
+          dockerfile: Dockerfile
           failure-threshold: warning
 
       - name: Validate Dockerfile
-        working-directory: NodeJsapp
         run: |
           echo "=== Validating Dockerfile ==="
           
@@ -208,17 +198,14 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
-        working-directory: NodeJsapp
         run: |
           echo "=== Installing Dependencies ==="
           npm ci
           echo "✅ Dependencies installed"
 
       - name: Test API Routes
-        working-directory: NodeJsapp
         run: |
           echo "=== Testing API Structure ==="
           
@@ -238,7 +225,6 @@ jobs:
           echo "=== API structure test complete ==="
 
       - name: Verify Environment Variables
-        working-directory: NodeJsapp
         run: |
           echo "=== Checking Environment Variables ==="
           
@@ -336,7 +322,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
-        working-directory: NodeJsapp
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
