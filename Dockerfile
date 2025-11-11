@@ -7,7 +7,7 @@ COPY . .
 # Multi-stage build
 FROM node:18-alpine
 WORKDIR /usr/src/app
-COPY --from-builder /usr/src/app .
+COPY --from=builder /usr/src/app .
 ENV PORT=3000 \
     DB="" \
     DBUSER="" \

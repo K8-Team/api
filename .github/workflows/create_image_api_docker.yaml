@@ -37,6 +37,9 @@ jobs:
     name: Security & Vulnerability Scan
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    defaults:
+      run:
+        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -47,6 +50,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
@@ -68,6 +72,9 @@ jobs:
     name: Linting
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    defaults:
+      run:
+        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -78,6 +85,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
@@ -97,6 +105,9 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    defaults:
+      run:
+        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -107,6 +118,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
@@ -120,6 +132,9 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    defaults:
+      run:
+        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -130,6 +145,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
@@ -143,6 +159,9 @@ jobs:
     name: Type Checking
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    defaults:
+      run:
+        working-directory: NodeJsapp
     
     steps:
       - name: Checkout code
@@ -153,6 +172,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
 
       - name: Install Dependencies
         run: npm ci
@@ -174,7 +194,7 @@ jobs:
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: Dockerfile
+          dockerfile: NodeJsapp/Dockerfile
           failure-threshold: warning
 
   build-image:
@@ -270,6 +290,7 @@ jobs:
           fi
 
       - name: Build Docker Image
+        working-directory: NodeJsapp
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
