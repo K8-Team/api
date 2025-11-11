@@ -42,6 +42,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Debug - Show existing tags
+        run: |
+          echo "Existing Git tags:"
+          git tag -l
+          echo ""
+          echo "Latest tag:"
+          git describe --tags --abbrev=0 2>/dev/null || echo "No tags found"
+
       - name: Bump version and create Git tag
         id: bump
         if: inputs.version_bump != 'none'
@@ -51,6 +59,12 @@ jobs:
           WITH_V: true
           DEFAULT_BUMP: ${{ inputs.version_bump }}
           DRY_RUN: false
+
+      - name: Debug - Show new tag
+        if: inputs.version_bump != 'none'
+        run: |
+          echo "New tag created: ${{ steps.bump.outputs.new_tag }}"
+          echo "Previous tag: ${{ steps.bump.outputs.tag }}"
 
       - name: Set version tag and full image name
         id: version
