@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       dockerhub_repository:
-        description: "Docker Hub repository name (e.g., username/nodejs-app)"
+        description: "Docker Hub repository name (MUST include username, e.g., myusername/nodejs-app)"
         required: true
         type: string
-        default: "nodejs-nyan-app"
+        default: "yourusername/nodejs-nyan-app"
       image_name:
         description: "Local Docker image name (e.g., api, web, myapp)"
         required: true
@@ -48,6 +48,15 @@ jobs:
       - name: Debug - Docker Hub Login
         run: |
           echo "✅ Docker Hub login successful"
+          echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
+          echo "Repository: ${{ inputs.dockerhub_repository }}"
+          
+          # Validate repository format
+          if [[ ! "${{ inputs.dockerhub_repository }}" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+            echo "❌ ERROR: Repository name must be in format 'username/repository'"
+            echo "Current value: ${{ inputs.dockerhub_repository }}"
+            exit 1
+          fi
           echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
 
       - name: Set up Docker Buildx
