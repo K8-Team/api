@@ -254,6 +254,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.version.outputs.tag }}
       image_name: ${{ steps.version.outputs.full_image_name }}
+      local_image_name: ${{ inputs.image_name }}
     
     steps:
       - name: Checkout code
@@ -338,21 +339,19 @@ jobs:
       - name: Build Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
-          IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
+          LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
           
           echo "=== Building Docker Image ==="
-          docker build -t $IMAGE_URI .
-          docker tag $IMAGE_URI $FULL_IMAGE_NAME:latest
-          echo "✅ Docker image built: $IMAGE_URI"
+          docker build -t $LOCAL_IMAGE_NAME:$VERSION_TAG .
+          echo "✅ Docker image built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
 
       - name: Save Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
+          LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
           
           echo "=== Saving Docker Image ==="
-          docker save $FULL_IMAGE_NAME:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
+          docker save $LOCAL_IMAGE_NAME:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
           echo "✅ Image saved"
 
       - name: Upload Docker Image Artifact
@@ -390,7 +389,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}'
+          image-ref: '${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}'
           format: 'table'
           exit-code: '0'
           ignore-unfixed: true
@@ -419,7 +418,7 @@ jobs:
 
       - name: Test Health Endpoint
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Health Endpoint ==="
           docker run -d --name health-test \
@@ -467,7 +466,7 @@ jobs:
 
       - name: Test Container Startup
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Container Startup ==="
           docker run -d --name startup-test \
@@ -514,7 +513,7 @@ jobs:
 
       - name: Check Image Size
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking Image Size ==="
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
@@ -551,7 +550,7 @@ jobs:
 
       - name: Check Exposed Ports
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking Exposed Ports ==="
           EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
@@ -587,7 +586,7 @@ jobs:
 
       - name: Test with Missing Environment Variables
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing with Missing Env Vars ==="
           docker run -d --name env-test -p 3002:3000 $IMAGE_URI || true
@@ -628,7 +627,7 @@ jobs:
 
       - name: Check User Permissions
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking User Permissions ==="
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
@@ -662,7 +661,7 @@ jobs:
 
       - name: Test SIGTERM Handling
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Graceful Shutdown ==="
           docker run -d --name shutdown-test \
@@ -715,7 +714,7 @@ jobs:
 
       - name: Analyze Image Layers
         run: |
-          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Analyzing Image Layers ==="
           docker history $IMAGE_URI
@@ -765,20 +764,29 @@ jobs:
           docker load < /tmp/docker-image.tar.gz
           echo "✅ Image loaded"
 
-      - name: Tag Image as Latest
-        run: |
-          VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
-          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
-          
-          echo "=== Tagging image as latest ==="
-          docker tag $FULL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:latest
-          echo "✅ Tagged as latest"
-
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag Images for Docker Hub
+        run: |
+          VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
+          LOCAL_IMAGE_NAME="${{ needs.build-image.outputs.local_image_name }}"
+          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
+          
+          echo "=== Tagging images for Docker Hub ==="
+          echo "Local image: $LOCAL_IMAGE_NAME:$VERSION_TAG"
+          echo "Docker Hub image: $FULL_IMAGE_NAME"
+          
+          # Tag with version
+          docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:$VERSION_TAG
+          
+          # Tag as latest
+          docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:latest
+          
+          echo "✅ Images tagged for Docker Hub"
 
       - name: Check Image Test Results
         run: |
