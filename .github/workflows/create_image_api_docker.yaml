@@ -8,11 +8,26 @@ on:
         required: true
         type: string
         default: "liken01else/mywordpress"
-      image_tag:
-        description: "Image tag (e.g., latest, 1.0.0, dev)"
+      version_bump:
+        description: "Version bump type (major, minor, patch) or 'none' to use manual tag"
         required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
+        default: "patch"
+      manual_tag:
+        description: "Manual tag (only used if version_bump is 'none')"
+        required: false
         type: string
-        default: "1.0.0"
+        default: "latest"
+      push_latest:
+        description: "Also push as 'latest' tag"
+        required: true
+        type: boolean
+        default: true
         
 env:
   DOCKERFILE_PATH: '.'
@@ -26,6 +41,31 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and create Git tag
+        id: bump
+        if: inputs.version_bump != 'none'
+        uses: anothrNick/github-tag-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: ${{ inputs.version_bump }}
+          DRY_RUN: false
+
+      - name: Set version tag
+        id: version
+        run: |
+          if [ "${{ inputs.version_bump }}" = "none" ]; then
+            VERSION_TAG="${{ inputs.manual_tag }}"
+            echo "Using manual tag: $VERSION_TAG"
+          else
+            VERSION_TAG="${{ steps.bump.outputs.new_tag }}"
+            echo "Using bumped version: $VERSION_TAG"
+          fi
+          echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "Version tag: $VERSION_TAG"
 
       - name: Debug - GitHub Context
         run: |
@@ -44,7 +84,9 @@ jobs:
         run: |
           echo "✅ Docker Hub login successful"
           echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
-          echo "Image: ${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          echo "Image: ${{ inputs.image_name }}"
+          echo "Version bump: ${{ inputs.version_bump }}"
+          echo "Push latest: ${{ inputs.push_latest }}"
           
           # Validate image name format
           if [[ ! "${{ inputs.image_name }}" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
@@ -52,7 +94,6 @@ jobs:
             echo "Current value: ${{ inputs.image_name }}"
             exit 1
           fi
-          echo "Username: ${{ secrets.DOCKERHUB_USERNAME }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -72,10 +113,17 @@ jobs:
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
+          VERSION_TAG="${{ steps.version.outputs.tag }}"
+          IMAGE_URI=${{ inputs.image_name }}:$VERSION_TAG
           echo "Building image: $IMAGE_URI"
           
           docker build -t $IMAGE_URI .
+          
+          # Also tag as latest if requested
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            docker tag $IMAGE_URI ${{ inputs.image_name }}:latest
+            echo "Tagged as latest"
+          fi
           
           echo "✅ Build successful"
           echo "Docker Hub image: $IMAGE_URI"
@@ -83,7 +131,8 @@ jobs:
       - name: Scan Docker Image for Vulnerabilities
         continue-on-error: true
         run: |
-          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
+          VERSION_TAG="${{ steps.version.outputs.tag }}"
+          IMAGE_URI=${{ inputs.image_name }}:$VERSION_TAG
           echo "Scanning image for vulnerabilities..."
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -94,15 +143,25 @@ jobs:
 
       - name: Push Docker Image to Docker Hub
         run: |
-          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
+          VERSION_TAG="${{ steps.version.outputs.tag }}"
+          IMAGE_URI=${{ inputs.image_name }}:$VERSION_TAG
           docker push $IMAGE_URI
           echo "✅ Successfully pushed: $IMAGE_URI"
+          
+          # Also push latest if requested
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            LATEST_URI=${{ inputs.image_name }}:latest
+            docker push $LATEST_URI
+            echo "✅ Successfully pushed: $LATEST_URI"
+          fi
 
       - name: Get Image Details
         id: image-details
         run: |
-          IMAGE_URI=${{ inputs.image_name }}:${{ inputs.image_tag }}
+          VERSION_TAG="${{ steps.version.outputs.tag }}"
+          IMAGE_URI=${{ inputs.image_name }}:$VERSION_TAG
           echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
           
           # Get image size from local Docker
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
@@ -132,20 +191,29 @@ jobs:
         env:
           IMAGE_URI: ${{ steps.image-details.outputs.image_uri }}
           IMAGE_NAME: ${{ inputs.image_name }}
-          IMAGE_TAG: ${{ inputs.image_tag }}
+          VERSION_TAG: ${{ steps.image-details.outputs.version_tag }}
         run: |
           echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Docker Hub Image Details" >> $GITHUB_STEP_SUMMARY
           echo "**Full Image URI:** \`$IMAGE_URI\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Image Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Version Tag:** \`$VERSION_TAG\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "**Latest Tag:** \`$IMAGE_NAME:latest\` ✅" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "**Docker Hub URL:** https://hub.docker.com/r/$IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
           echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Pull Command" >> $GITHUB_STEP_SUMMARY
+          echo "#### Pull Commands" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull with version tag" >> $GITHUB_STEP_SUMMARY
           echo "docker pull $IMAGE_URI" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull $IMAGE_NAME:latest" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
