@@ -302,11 +302,27 @@ jobs:
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Validate Docker Hub Username
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "❌ ERROR: DOCKERHUB_USERNAME secret is not set!"
+            echo "Please add the DOCKERHUB_USERNAME secret to your repository:"
+            echo "Settings → Secrets and variables → Actions → New repository secret"
+            echo "Name: DOCKERHUB_USERNAME"
+            echo "Value: Your Docker Hub username"
+            exit 1
+          fi
+          echo "✅ DOCKERHUB_USERNAME secret is set"
+
       - name: Set version tag and full image name
         id: version
         run: |
-          FULL_IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}"
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          IMAGE_NAME="${{ inputs.image_name }}"
+          FULL_IMAGE_NAME="$DOCKERHUB_USER/$IMAGE_NAME"
+          
           echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Docker Hub image will be: $FULL_IMAGE_NAME"
           
           if [ "${{ inputs.version_bump }}" = "none" ]; then
             VERSION_TAG="latest"
@@ -314,6 +330,7 @@ jobs:
             VERSION_TAG="${{ steps.bump.outputs.new_version }}"
           fi
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "Version tag: $VERSION_TAG"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -764,6 +781,18 @@ jobs:
           docker load < /tmp/docker-image.tar.gz
           echo "✅ Image loaded"
 
+      - name: Validate Docker Hub Credentials
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
+            echo "❌ ERROR: DOCKERHUB_USERNAME secret is not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "❌ ERROR: DOCKERHUB_TOKEN secret is not set!"
+            exit 1
+          fi
+          echo "✅ Docker Hub credentials are configured"
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -774,19 +803,29 @@ jobs:
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
           LOCAL_IMAGE_NAME="${{ needs.build-image.outputs.local_image_name }}"
-          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          
+          # Construct full image name
+          FULL_IMAGE_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
           
           echo "=== Tagging images for Docker Hub ==="
           echo "Local image: $LOCAL_IMAGE_NAME:$VERSION_TAG"
           echo "Docker Hub image: $FULL_IMAGE_NAME"
           
+          # Verify local image exists
+          if ! docker image inspect $LOCAL_IMAGE_NAME:$VERSION_TAG > /dev/null 2>&1; then
+            echo "❌ ERROR: Local image $LOCAL_IMAGE_NAME:$VERSION_TAG not found!"
+            docker images
+            exit 1
+          fi
+          
           # Tag with version
           docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:$VERSION_TAG
+          echo "✅ Tagged: $FULL_IMAGE_NAME:$VERSION_TAG"
           
           # Tag as latest
           docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:latest
-          
-          echo "✅ Images tagged for Docker Hub"
+          echo "✅ Tagged: $FULL_IMAGE_NAME:latest"
 
       - name: Check Image Test Results
         run: |
@@ -811,9 +850,12 @@ jobs:
       - name: Push Docker Image to Docker Hub
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
-          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
+          LOCAL_IMAGE_NAME="${{ needs.build-image.outputs.local_image_name }}"
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          FULL_IMAGE_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
           
           echo "=== Pushing Docker Image ==="
+          echo "Pushing to: $FULL_IMAGE_NAME"
           
           # Push version tag
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
@@ -822,6 +864,12 @@ jobs:
           # Always push latest tag
           docker push $FULL_IMAGE_NAME:latest
           echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
+          
+          echo ""
+          echo "=== Push Complete ==="
+          echo "Image available at:"
+          echo "  docker pull $FULL_IMAGE_NAME:$VERSION_TAG"
+          echo "  docker pull $FULL_IMAGE_NAME:latest"
 
 
   # ============================================
