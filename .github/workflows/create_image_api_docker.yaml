@@ -7,7 +7,7 @@ on:
         description: "Docker Hub repository name (MUST include username, e.g., myusername/nodejs-app)"
         required: true
         type: string
-        default: "yourusername/nodejs-nyan-app"
+        default: "liken01else/nodejs-nyan-app"
       image_name:
         description: "Local Docker image name (e.g., api, web, myapp)"
         required: true
@@ -77,17 +77,16 @@ jobs:
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          IMAGE_URI=${{ inputs.dockerhub_repository }}:${{ inputs.image_tag }}
+          FULL_TAG="${{ inputs.image_name }}-${{ inputs.image_tag }}"
+          IMAGE_URI=${{ inputs.dockerhub_repository }}:$FULL_TAG
           echo "Building image: $IMAGE_URI"
           
           docker build -t ${{ inputs.image_name }}:${{ inputs.image_tag }} .
           docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} $IMAGE_URI
-          docker tag ${{ inputs.image_name }}:${{ inputs.image_tag }} ${{ inputs.dockerhub_repository }}:${{ github.sha }}
           
           echo "✅ Build successful"
           echo "Local image: ${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "Docker Hub image: $IMAGE_URI"
-          echo "Docker Hub SHA tag: ${{ inputs.dockerhub_repository }}:${{ github.sha }}"
 
       - name: Scan Docker Image for Vulnerabilities
         continue-on-error: true
@@ -102,18 +101,17 @@ jobs:
 
       - name: Push Docker Image to Docker Hub
         run: |
-          IMAGE_URI=${{ inputs.dockerhub_repository }}:${{ inputs.image_tag }}
+          FULL_TAG="${{ inputs.image_name }}-${{ inputs.image_tag }}"
+          IMAGE_URI=${{ inputs.dockerhub_repository }}:$FULL_TAG
           docker push $IMAGE_URI
           echo "✅ Successfully pushed: $IMAGE_URI"
-          
-          IMAGE_URI_SHA=${{ inputs.dockerhub_repository }}:${{ github.sha }}
-          docker push $IMAGE_URI_SHA
-          echo "✅ Successfully pushed: $IMAGE_URI_SHA"
 
       - name: Get Image Details
         id: image-details
         run: |
+          FULL_TAG="${{ inputs.image_name }}-${{ inputs.image_tag }}"
           echo "repo_uri=${{ inputs.dockerhub_repository }}" >> $GITHUB_OUTPUT
+          echo "full_tag=$FULL_TAG" >> $GITHUB_OUTPUT
           
           # Get image size from local Docker
           IMAGE_SIZE=$(docker image inspect ${{ inputs.image_name }}:${{ inputs.image_tag }} --format='{{.Size}}')
@@ -144,6 +142,7 @@ jobs:
           DOCKERHUB_REPO: ${{ inputs.dockerhub_repository }}
           IMAGE_NAME: ${{ inputs.image_name }}
           IMAGE_TAG: ${{ inputs.image_tag }}
+          FULL_TAG: ${{ steps.image-details.outputs.full_tag }}
         run: |
           echo "### Docker Image Built and Pushed! 🐳" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -155,16 +154,12 @@ jobs:
           echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
           echo "**Image Name:** \`$IMAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Tag:** \`$IMAGE_TAG\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit SHA Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Full Docker Hub Tag:** \`$FULL_TAG\`" >> $GITHUB_STEP_SUMMARY
           echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Pull Command" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "# Pull with tag" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $DOCKERHUB_REPO:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "# Pull with commit SHA" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull $DOCKERHUB_REPO:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull $DOCKERHUB_REPO:$FULL_TAG" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
@@ -173,7 +168,7 @@ jobs:
           echo "spec:" >> $GITHUB_STEP_SUMMARY
           echo "  containers:" >> $GITHUB_STEP_SUMMARY
           echo "  - name: $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "    image: $DOCKERHUB_REPO:$IMAGE_TAG" >> $GITHUB_STEP_SUMMARY
+          echo "    image: $DOCKERHUB_REPO:$FULL_TAG" >> $GITHUB_STEP_SUMMARY
           echo "    env:" >> $GITHUB_STEP_SUMMARY
           echo "    - name: DB_USER" >> $GITHUB_STEP_SUMMARY
           echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
