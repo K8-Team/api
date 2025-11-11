@@ -3,13 +3,8 @@ name: Build Image to Docker Hub
 on:
   workflow_dispatch:
     inputs:
-      image_name:
-        description: "Image name (e.g., api, web, myapp)"
-        required: true
-        type: string
-        default: "api"
       version_bump:
-        description: "Version bump type (major, minor, patch) or 'none' for latest only"
+        description: "Version bump type ('none' for 'latest' only)"
         required: true
         type: choice
         options:
@@ -26,6 +21,11 @@ on:
           - "no"
           - "yes"
         default: "yes"
+      image_name:
+        description: "Image name"
+        required: true
+        type: string
+        default: "api"
 
 jobs:
   # ============================================
