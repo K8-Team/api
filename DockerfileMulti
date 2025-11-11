@@ -1,14 +1,36 @@
-FROM node:18 AS builder
+# Build stage
+FROM node:18-alpine AS builder
 WORKDIR /usr/src/app
-COPY package.json .
-RUN npm install 
-COPY . . 
 
-# next stage
-FROM node:18-slim
+# Copy package files
+COPY package*.json ./
+
+# Install only production dependencies
+RUN npm ci --only=production
+
+# Production stage
+FROM node:18-alpine
 WORKDIR /usr/src/app
-COPY --from-builder /usr/src/app .
+
+# Copy dependencies from builder
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+
+# Copy application code
+COPY . .
+
+# Set default environment variables (will be overridden by Kubernetes/Docker run)
 ENV PORT=3000 \
-    API_HOST=http://54.226.15.90:3001 
-EXPOSE 3000
-CMD ["npm","start"]
+    DB="" \
+    DBUSER="" \
+    DBPASS="" \
+    DBHOST="" \
+    DBPORT=""
+
+# Expose application port
+EXPOSE 3001
+
+# Run as non-root user for security
+USER node
+
+# Start the application
+CMD ["npm", "start"]

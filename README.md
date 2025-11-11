@@ -22,3 +22,22 @@
 - DBPORT: Database server listening port
 
 These variables need to be set
+
+
+build-image job:
+  Build → Save to tar.gz → Upload artifact
+                              ↓
+                    [GitHub Artifact Storage]
+                              ↓
+                    ┌─────────┼─────────┐
+                    ↓         ↓         ↓
+            test-health  test-startup  test-logs  (parallel)
+                    ↓         ↓         ↓
+              Download   Download   Download
+                Load       Load       Load
+                Test       Test       Test
+                              ↓
+                    All tests pass?
+                              ↓
+                         push-image:
+                      Download → Load → Push

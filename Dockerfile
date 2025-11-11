@@ -1,13 +1,19 @@
-FROM node:18
+FROM node:18 AS builder
 WORKDIR /usr/src/app
 COPY package.json .
 RUN npm install 
 COPY . . 
-ENV PORT=3001 \
-    DB=hello \
-    DBUSER=kaizen \
-    DBPASS=Hello123! \
-    DBHOST=34.123.197.63 \
-    DBPORT=3306
+
+# Multi-stage build
+FROM node:18-alpine
+WORKDIR /usr/src/app
+COPY --from-builder /usr/src/app .
+ENV PORT=3000 \
+    DB="" \
+    DBUSER="" \
+    DBPASS="" \
+    DBHOST="" \
+    DBPORT=""
 EXPOSE 3001
+# USER node
 CMD ["npm","start"]

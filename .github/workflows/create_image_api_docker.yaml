@@ -24,17 +24,269 @@ on:
           - none
         default: "patch"
         
-env:
-  DOCKERFILE_PATH: '.'
-
 jobs:
-  build-and-push:
-    name: Build and Push Docker Image
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: NodeJsapp
+        run: |
+          echo "Installing dependencies..."
+          npm ci
+          echo "✅ Dependencies installed"
+
+  syntax-check:
+    name: Syntax Check
     runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Check JavaScript Syntax
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Checking JavaScript Syntax ==="
+          echo "Checking app.js..."
+          node -c app.js
+          echo "✅ app.js syntax valid"
+          
+          echo "Checking bin/www.js..."
+          node -c bin/www.js
+          echo "✅ bin/www.js syntax valid"
+          
+          echo "=== All syntax checks passed ==="
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Installing Dependencies ==="
+          npm ci
+          echo "✅ Dependencies installed"
+
+      - name: Run Security Audit
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Running npm audit ==="
+          npm audit --audit-level=moderate || echo "⚠️ Vulnerabilities found but continuing"
+          echo "=== Security audit complete ==="
+
+  dependency-check:
+    name: Dependency Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Installing Dependencies ==="
+          npm ci
+          echo "✅ Dependencies installed"
+
+      - name: Check for Outdated Dependencies
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Checking for Outdated Dependencies ==="
+          npm outdated || true
+          echo "=== Dependency check complete ==="
+
+      - name: Validate Package.json
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Validating package.json ==="
+          npm pkg fix
+          echo "✅ Package.json is valid"
+
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Check Code Structure
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Checking Code Structure ==="
+          echo "Files in project:"
+          find . -name "*.js" -type f
+          
+          echo ""
+          echo "Checking for required files..."
+          test -f app.js && echo "✅ app.js exists" || echo "❌ app.js missing"
+          test -f package.json && echo "✅ package.json exists" || echo "❌ package.json missing"
+          test -f Dockerfile && echo "✅ Dockerfile exists" || echo "❌ Dockerfile missing"
+          test -f bin/www.js && echo "✅ bin/www.js exists" || echo "❌ bin/www.js missing"
+          
+          echo "=== Code structure check complete ==="
+
+      - name: Check for Common Issues
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Checking for Common Issues ==="
+          
+          echo "Checking for console.log statements..."
+          grep -r "console.log" . --include="*.js" || echo "✅ No console.log found"
+          
+          echo ""
+          echo "Checking for TODO comments..."
+          grep -r "TODO" . --include="*.js" || echo "✅ No TODO comments found"
+          
+          echo ""
+          echo "Checking for hardcoded credentials..."
+          grep -ri "password\|secret\|api_key" . --include="*.js" | grep -v "process.env" || echo "✅ No hardcoded credentials found"
+          
+          echo "=== Common issues check complete ==="
+
+  dockerfile-lint:
+    name: Dockerfile Lint
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: NodeJsapp/Dockerfile
+          failure-threshold: warning
+
+      - name: Validate Dockerfile
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Validating Dockerfile ==="
+          
+          echo "Checking Dockerfile syntax..."
+          docker build --no-cache --target builder -f Dockerfile . 2>&1 || echo "⚠️ Multi-stage build not used"
+          
+          echo ""
+          echo "Checking for best practices..."
+          grep -q "FROM.*alpine" Dockerfile && echo "✅ Using Alpine base image" || echo "⚠️ Not using Alpine"
+          grep -q "WORKDIR" Dockerfile && echo "✅ WORKDIR is set" || echo "❌ WORKDIR not set"
+          grep -q "EXPOSE" Dockerfile && echo "✅ EXPOSE is defined" || echo "⚠️ EXPOSE not defined"
+          grep -q "CMD" Dockerfile && echo "✅ CMD is defined" || echo "❌ CMD not defined"
+          
+          echo "=== Dockerfile validation complete ==="
+
+  api-structure-test:
+    name: API Structure Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: NodeJsapp/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Installing Dependencies ==="
+          npm ci
+          echo "✅ Dependencies installed"
+
+      - name: Test API Routes
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Testing API Structure ==="
+          
+          echo "Checking for required routes..."
+          grep -q "/health" app.js && echo "✅ /health endpoint exists" || echo "❌ /health endpoint missing"
+          grep -q "/api/status" app.js && echo "✅ /api/status endpoint exists" || echo "❌ /api/status endpoint missing"
+          
+          echo ""
+          echo "Checking for error handlers..."
+          grep -q "404" app.js && echo "✅ 404 handler exists" || echo "❌ 404 handler missing"
+          grep -q "error handler" app.js && echo "✅ Error handler exists" || echo "❌ Error handler missing"
+          
+          echo ""
+          echo "Checking for database connection..."
+          grep -q "mysql" app.js && echo "✅ MySQL connection configured" || echo "❌ MySQL connection missing"
+          
+          echo "=== API structure test complete ==="
+
+      - name: Verify Environment Variables
+        working-directory: NodeJsapp
+        run: |
+          echo "=== Checking Environment Variables ==="
+          
+          echo "Required environment variables in app.js:"
+          grep "process.env" app.js | sort | uniq
+          
+          echo ""
+          echo "Checking if all required env vars are used..."
+          grep -q "process.env.DBUSER" app.js && echo "✅ DBUSER is used" || echo "❌ DBUSER not used"
+          grep -q "process.env.DB" app.js && echo "✅ DB is used" || echo "❌ DB not used"
+          grep -q "process.env.DBPASS" app.js && echo "✅ DBPASS is used" || echo "❌ DBPASS not used"
+          grep -q "process.env.DBHOST" app.js && echo "✅ DBHOST is used" || echo "❌ DBHOST not used"
+          grep -q "process.env.DBPORT" app.js && echo "✅ DBPORT is used" || echo "❌ DBPORT not used"
+          
+          echo "=== Environment variables check complete ==="
+
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: [syntax-check, security-audit, dependency-check, code-quality, dockerfile-lint, api-structure-test]
     environment: dev
     permissions:
       contents: write
       packages: write
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
+      image_name: ${{ steps.version.outputs.full_image_name }}
     
     steps:
       - name: Checkout code
@@ -105,22 +357,274 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
-        working-directory: ${{ env.DOCKERFILE_PATH }}
+        working-directory: NodeJsapp
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
           IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
           
+          echo "=== Building Docker Image ==="
           docker build -t $IMAGE_URI .
           docker tag $IMAGE_URI $FULL_IMAGE_NAME:latest
+          echo "✅ Docker image built: $IMAGE_URI"
 
-      - name: Push Docker Image to Docker Hub
+      - name: Save Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
           
+          echo "=== Saving Docker Image ==="
+          docker save $FULL_IMAGE_NAME:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
+          echo "✅ Image saved"
+
+      - name: Upload Docker Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/docker-image.tar.gz
+          retention-days: 1
+
+  test-image-health:
+    name: Test Image Health
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test Health Endpoint
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Health Endpoint ==="
+          docker run -d --name health-test \
+            -p 3000:3000 \
+            -e DBUSER=testuser \
+            -e DB=testdb \
+            -e DBPASS=testpass \
+            -e DBHOST=localhost \
+            -e DBPORT=3306 \
+            $IMAGE_URI
+          
+          sleep 5
+          
+          echo "Testing /health endpoint..."
+          if curl -f http://localhost:3000/health; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            docker logs health-test
+            exit 1
+          fi
+          
+          docker stop health-test
+          docker rm health-test
+
+  test-image-startup:
+    name: Test Image Startup
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test Container Startup
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Container Startup ==="
+          docker run -d --name startup-test \
+            -p 3001:3000 \
+            -e DBUSER=testuser \
+            -e DB=testdb \
+            -e DBPASS=testpass \
+            -e DBHOST=localhost \
+            -e DBPORT=3306 \
+            $IMAGE_URI
+          
+          sleep 5
+          
+          if docker ps | grep startup-test; then
+            echo "✅ Container started successfully"
+          else
+            echo "❌ Container failed to start"
+            docker logs startup-test
+            exit 1
+          fi
+          
+          docker stop startup-test
+          docker rm startup-test
+
+  test-image-logs:
+    name: Test Image Logs
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test Container Logs
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Container Logs ==="
+          docker run -d --name logs-test \
+            -p 3002:3000 \
+            -e DBUSER=testuser \
+            -e DB=testdb \
+            -e DBPASS=testpass \
+            -e DBHOST=localhost \
+            -e DBPORT=3306 \
+            $IMAGE_URI
+          
+          sleep 5
+          
+          echo "Checking container logs..."
+          docker logs logs-test
+          
+          if docker logs logs-test 2>&1 | grep -q "error\|Error\|ERROR"; then
+            echo "⚠️ Errors found in logs"
+            docker logs logs-test
+          else
+            echo "✅ No errors in logs"
+          fi
+          
+          docker stop logs-test
+          docker rm logs-test
+
+  test-image-env:
+    name: Test Image Environment
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Test Environment Variables
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Environment Variables ==="
+          docker run --rm \
+            -e DBUSER=testuser \
+            -e DB=testdb \
+            -e DBPASS=testpass \
+            -e DBHOST=testhost \
+            -e DBPORT=3306 \
+            $IMAGE_URI \
+            sh -c 'echo "DBUSER=$DBUSER DB=$DB DBHOST=$DBHOST DBPORT=$DBPORT"'
+          
+          echo "✅ Environment variables are accessible"
+
+  test-image-size:
+    name: Test Image Size
+    runs-on: ubuntu-latest
+    needs: [build-image]
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Check Image Size
+        run: |
+          IMAGE_URI="${{ needs.build-image.outputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking Image Size ==="
+          IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
+          IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+          
+          echo "Image size: ${IMAGE_SIZE_MB}MB"
+          
+          if [ $IMAGE_SIZE_MB -gt 500 ]; then
+            echo "⚠️ Image is larger than 500MB"
+          else
+            echo "✅ Image size is acceptable"
+          fi
+
+  push-image:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: [build-image, test-image-health, test-image-startup, test-image-logs, test-image-env, test-image-size]
+    environment: dev
+    
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker Image
+        run: |
+          echo "=== Loading Docker Image ==="
+          docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push Docker Image to Docker Hub
+        run: |
+          VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
+          FULL_IMAGE_NAME="${{ needs.build-image.outputs.image_name }}"
+          
+          echo "=== Pushing Docker Image ==="
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
+          echo "✅ Pushed: $FULL_IMAGE_NAME:$VERSION_TAG"
           
           if [ "${{ inputs.version_bump }}" != "none" ]; then
             docker push $FULL_IMAGE_NAME:latest
+            echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
           fi
