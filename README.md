@@ -25,7 +25,8 @@ These variables need to be set
 
 
 ## Description
-Workflow run with auto tests, encypted images, saved in repo 5 last versions(old one deleted), triggered manually or by PR merge
+Comprehensive testing suite, encypted images, saved in repo 5 last versions(old one deleted), triggered manually or by PR merge, AWS OIDC authentication (no access keys), Automatic ECR repository creation, Lifecycle policies for image retention, Multi-region support
+
 
 ### Pre-Build Tests - These tests run before building the Docker image:
 
