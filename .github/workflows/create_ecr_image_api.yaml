@@ -79,7 +79,7 @@ jobs:
             ECR_REPO_NAME="${{ inputs.ecr_repository_name }}"
           else
             VERSION_BUMP="patch"
-            PUSH_ON_FAILURE="yes"
+            PUSH_ON_FAILURE="no"
             IMAGE_NAME="api"
             ECR_REGION="us-east-1"
             ECR_REPO_NAME="nodejs-nyan-app"

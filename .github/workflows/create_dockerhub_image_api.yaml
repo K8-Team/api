@@ -56,7 +56,7 @@ jobs:
             IMAGE_NAME="${{ inputs.image_name }}"
           else
             VERSION_BUMP="patch"
-            PUSH_ON_FAILURE="yes"
+            PUSH_ON_FAILURE="no"
             IMAGE_NAME="api"
           fi
           
