@@ -26,6 +26,7 @@ These variables need to be set
 
 ## Workflow triggered on 'push' event to main branch of repo!!!
 
+
 ## Workflows Description
 Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
 
