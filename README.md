@@ -24,18 +24,17 @@
 These variables need to be set
 
 
+## Workflows Description
+Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
+
+
 ## Installation - add to 'Repository secrets' folder in GitHub repo:
 - AWS_ACCOUNT_ID
 - DOCKERHUB_TOKEN
 - DOCKERHUB_USERNAME
 
 
-## Workflows Description
-Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
-
-
 ### Pre-Build Tests - These tests run before building the Docker image:
-
 1. **Lint Test** - Runs ESLint to check code quality and style
 2. **Unit Tests** - Executes unit tests via npm test
 3. **Integration Tests** - Runs integration test suite
@@ -44,9 +43,7 @@ Comprehensive testing suite with parallel execution; encrypted Docker images sto
 6. **Dependency Validation** - Checks package.json validity, outdated packages, and duplicates
 7. **License Compliance** - Scans dependencies for license issues and generates compliance reports
 
-
 ### Post-Build Tests - These tests run after building the Docker image:
-
 1. **Vulnerability Scan** - Scans image for OS and library vulnerabilities using Trivy
 2. **Health Endpoint Test** - Verifies the /health endpoint responds correctly
 3. **Container Startup Test** - Ensures container starts successfully with required environment variables
@@ -57,6 +54,7 @@ Comprehensive testing suite with parallel execution; encrypted Docker images sto
 8. **Graceful Shutdown Test** - Tests SIGTERM handling and shutdown time
 9. **Layer Analysis** - Analyzes Docker image layers for optimization opportunities
 ---
+
 
 ## Workflow scheme diagram
 ```sh
