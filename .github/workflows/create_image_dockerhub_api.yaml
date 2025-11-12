@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: "Version bump type ('none' for 'latest' only)"
+        description: "Version bump type ('none' for tag 'latest' only)"
         required: true
         type: choice
         options:
@@ -33,7 +33,7 @@ jobs:
   # ============================================
   
   lint:
-    name: Lint
+    name: Lint Test
     runs-on: ubuntu-latest
     continue-on-error: true
     
