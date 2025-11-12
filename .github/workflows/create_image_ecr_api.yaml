@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - 'NodeJsapp/**'
+      - './**'
       - '.github/workflows/create_image_api_ecr.yaml'
   workflow_dispatch:
     inputs:
