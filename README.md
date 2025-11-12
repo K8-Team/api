@@ -24,8 +24,8 @@
 These variables need to be set
 
 
-## Description
-Comprehensive testing suite, encypted images, saved in repo 5 last versions(old one deleted), triggered manually or by PR merge, AWS OIDC authentication (no access keys), Automatic ECR repository creation, Lifecycle policies for image retention, Multi-region support
+## Workflows Description
+Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
 
 
 ### Pre-Build Tests - These tests run before building the Docker image:
