@@ -852,6 +852,7 @@ jobs:
     name: Push Docker Image to ECR
     runs-on: ubuntu-latest
     needs: [
+      setup,
       build-image, 
       test-image-vulnerabilities,
       test-image-health, 
@@ -863,7 +864,7 @@ jobs:
       test-image-shutdown,
       test-image-layers
     ]
-    if: ${{ always() && needs.build-image.result == 'success' && (needs.build-image.needs.setup.outputs.push_on_test_failure == 'yes' || (needs.test-image-health.result == 'success' && needs.test-image-startup.result == 'success' && needs.test-image-size.result == 'success')) }}
+    if: ${{ always() && needs.build-image.result == 'success' && (needs.setup.outputs.push_on_test_failure == 'yes' || (needs.test-image-health.result == 'success' && needs.test-image-startup.result == 'success' && needs.test-image-size.result == 'success')) }}
     environment: dev
     permissions:
       id-token: write
@@ -931,9 +932,9 @@ jobs:
           echo "Security Test: ${{ needs.test-image-security.result }}"
           echo "Shutdown Test: ${{ needs.test-image-shutdown.result }}"
           echo "Layers Test: ${{ needs.test-image-layers.result }}"
-          echo "Push on failure: ${{ needs.build-image.needs.setup.outputs.push_on_test_failure }}"
+          echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
           
-          if [ "${{ needs.build-image.needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
+          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
             echo "⚠️ Pushing image despite test failures (push_on_test_failure=yes)"
           else
             echo "✅ All image tests passed, proceeding with push"
@@ -980,7 +981,7 @@ jobs:
           IMAGE_DIGEST=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
-            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[0].imageDigest' \
             --output text)
           echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
@@ -988,7 +989,7 @@ jobs:
           IMAGE_SIZE=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
-            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[0].imageSizeInBytes' \
             --output text)
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
@@ -996,7 +997,7 @@ jobs:
           
           REPO_URI=$(aws ecr describe-repositories \
             --repository-names $ECR_REPO \
-            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'repositories[0].repositoryUri' \
             --output text)
           echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
@@ -1011,7 +1012,7 @@ jobs:
           echo "#### ECR Repository Details" >> $GITHUB_STEP_SUMMARY
           echo "**Repository Name:** \`${{ needs.build-image.outputs.ecr_repository }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Repository URI:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** \`${{ needs.build-image.needs.setup.outputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** \`${{ needs.setup.outputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
           echo "**Version Tag:** \`${{ needs.build-image.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
@@ -1039,7 +1040,7 @@ jobs:
           echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
           echo "spec:" >> $GITHUB_STEP_SUMMARY
           echo "  containers:" >> $GITHUB_STEP_SUMMARY
-          echo "  - name: ${{ needs.build-image.needs.setup.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: ${{ needs.setup.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
           echo "    image: ${{ steps.image-details.outputs.repo_uri }}:${{ needs.build-image.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "    env:" >> $GITHUB_STEP_SUMMARY
           echo "    - name: DBUSER" >> $GITHUB_STEP_SUMMARY
@@ -1098,3 +1099,4 @@ jobs:
           echo "✅ Docker image artifact deleted from GitHub storage"
           echo "Push Status: ${{ needs.push-image.result }}"
           echo "This frees up storage space and reduces costs"
+
