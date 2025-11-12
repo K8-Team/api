@@ -50,11 +50,7 @@ jobs:
       
       - name: Run ESLint
         run: |
-          if npm run lint 2>/dev/null; then
-            echo "✅ Lint passed"
-          else
-            echo "⚠️ Lint script not configured - skipping"
-          fi
+          npm run lint 2>/dev/null || echo "⚠️ Lint not configured"
 
   unit-tests:
     name: Unit Tests
@@ -74,11 +70,7 @@ jobs:
       
       - name: Run Unit Tests
         run: |
-          if npm test 2>/dev/null; then
-            echo "✅ Tests passed"
-          else
-            echo "⚠️ Test script not configured - skipping"
-          fi
+          npm test 2>/dev/null || echo "⚠️ Tests not configured"
 
   integration-tests:
     name: Integration Tests
@@ -98,11 +90,7 @@ jobs:
       
       - name: Run Integration Tests
         run: |
-          if npm run test:integration 2>/dev/null; then
-            echo "✅ Integration tests passed"
-          else
-            echo "⚠️ Integration test script not configured - skipping"
-          fi
+          npm run test:integration 2>/dev/null || echo "⚠️ Integration tests not configured"
 
   security:
     name: Security Scan
@@ -153,29 +141,17 @@ jobs:
       
       - name: Validate package.json
         run: |
-          echo "=== Validating package.json ==="
-          if [ -f "package.json" ]; then
-            if jq empty package.json 2>/dev/null; then
-              echo "✅ package.json is valid JSON"
-            else
-              echo "❌ package.json is invalid JSON"
-              exit 1
-            fi
-          else
-            echo "❌ package.json not found"
-            exit 1
-          fi
+          [ -f "package.json" ] || { echo "❌ package.json not found"; exit 1; }
+          jq empty package.json 2>/dev/null || { echo "❌ Invalid JSON"; exit 1; }
       
       - name: Check for outdated dependencies
         run: |
-          echo "=== Checking for outdated dependencies ==="
           npm install
-          npm outdated || echo "⚠️ Some dependencies are outdated"
+          npm outdated || echo "⚠️ Outdated dependencies"
       
       - name: Check for duplicate dependencies
         run: |
-          echo "=== Checking for duplicate dependencies ==="
-          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies found"
+          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies"
 
   # NEW: License compliance check
   license-check:
@@ -198,36 +174,23 @@ jobs:
         run: npm install -g license-checker
       
       - name: Check licenses (Summary)
-        run: |
-          echo "=== License Summary ==="
-          license-checker --summary
+        run: license-checker --summary
       
       - name: Check licenses (Detailed)
         run: |
-          echo "=== Detailed License Report ==="
           license-checker --json > licenses.json
           cat licenses.json
       
       - name: Check for prohibited licenses
         run: |
-          echo "=== Checking for Prohibited Licenses ==="
-          
-          # Define prohibited licenses (GPL variants that may cause issues)
           PROHIBITED="GPL|AGPL|LGPL"
-          
           if license-checker --json | jq -r '.[] | .licenses' | grep -iE "$PROHIBITED"; then
-            echo "⚠️ WARNING: Found potentially problematic licenses (GPL family)"
-            echo "Review these licenses for compatibility with your project"
+            echo "⚠️ Problematic licenses found (GPL family)"
             license-checker --json | jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL"; "i")) | "\(.key): \(.value.licenses)"'
-          else
-            echo "✅ No prohibited licenses found"
           fi
       
       - name: Generate license report
-        run: |
-          echo "=== Generating License Report ==="
-          license-checker --csv > license-report.csv
-          echo "✅ License report generated"
+        run: license-checker --csv > license-report.csv
       
       - name: Upload license report
         uses: actions/upload-artifact@v4
@@ -337,9 +300,7 @@ jobs:
 
       - name: Check Test Results
         run: |
-          echo "=== Test Results Summary ==="
-          echo "Lint: ${{ needs.lint.result }}"
-          echo "Unit Tests: ${{ needs.unit-tests.result }}"
+          echo "Tests: Lint=${{ needs.lint.result }} Unit=${{ needs.unit-tests.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Dockerfile Lint: ${{ needs.dockerfile-lint.result }}"
@@ -358,18 +319,15 @@ jobs:
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
           
-          echo "=== Building Docker Image ==="
           docker build -t $LOCAL_IMAGE_NAME:$VERSION_TAG .
-          echo "✅ Docker image built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
+          echo "✅ Built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
 
       - name: Save Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
           
-          echo "=== Saving Docker Image ==="
           docker save $LOCAL_IMAGE_NAME:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
-          echo "✅ Image saved"
 
       - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v4
@@ -398,10 +356,7 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
@@ -428,16 +383,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Test Health Endpoint
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Testing Health Endpoint ==="
           docker run -d --name health-test \
             -p 3000:3000 \
             -e DBUSER=testuser \
@@ -476,16 +427,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Test Container Startup
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Testing Container Startup ==="
           docker run -d --name startup-test \
             -p 3001:3000 \
             -e DBUSER=testuser \
@@ -523,16 +470,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Check Image Size
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Checking Image Size ==="
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
           
@@ -560,18 +503,13 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Check Exposed Ports
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Checking Exposed Ports ==="
           EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
-          echo "Exposed ports: $EXPOSED_PORTS"
           
           if echo "$EXPOSED_PORTS" | grep -q "3000"; then
             echo "✅ Port 3000 is exposed"
@@ -596,16 +534,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Test with Missing Environment Variables
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Testing with Missing Env Vars ==="
           docker run -d --name env-test -p 3002:3000 $IMAGE_URI || true
           
           sleep 3
@@ -637,16 +571,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Check User Permissions
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Checking User Permissions ==="
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
           
           if [ -z "$USER" ] || [ "$USER" = "root" ] || [ "$USER" = "0" ]; then
@@ -671,16 +601,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Test SIGTERM Handling
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Testing Graceful Shutdown ==="
           docker run -d --name shutdown-test \
             -p 3003:3000 \
             -e DBUSER=testuser \
@@ -724,16 +650,12 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Analyze Image Layers
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
-          echo "=== Analyzing Image Layers ==="
           docker history $IMAGE_URI
           
           LAYER_COUNT=$(docker history $IMAGE_URI --format "{{.ID}}" | wc -l)
@@ -776,22 +698,13 @@ jobs:
           path: /tmp
 
       - name: Load Docker Image
-        run: |
-          echo "=== Loading Docker Image ==="
-          docker load < /tmp/docker-image.tar.gz
-          echo "✅ Image loaded"
+        run: docker load < /tmp/docker-image.tar.gz
 
       - name: Validate Docker Hub Credentials
         run: |
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            echo "❌ ERROR: DOCKERHUB_USERNAME secret is not set!"
-            exit 1
-          fi
-          if [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "❌ ERROR: DOCKERHUB_TOKEN secret is not set!"
-            exit 1
-          fi
-          echo "✅ Docker Hub credentials are configured"
+          [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && { echo "❌ DOCKERHUB_USERNAME not set"; exit 1; }
+          [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ] && { echo "❌ DOCKERHUB_TOKEN not set"; exit 1; }
+          echo "✅ Credentials configured"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -807,10 +720,6 @@ jobs:
           
           # Construct full image name
           FULL_IMAGE_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
-          
-          echo "=== Tagging images for Docker Hub ==="
-          echo "Local image: $LOCAL_IMAGE_NAME:$VERSION_TAG"
-          echo "Docker Hub image: $FULL_IMAGE_NAME"
           
           # Verify local image exists
           if ! docker image inspect $LOCAL_IMAGE_NAME:$VERSION_TAG > /dev/null 2>&1; then
@@ -829,9 +738,7 @@ jobs:
 
       - name: Check Image Test Results
         run: |
-          echo "=== Image Test Results Summary ==="
-          echo "Vulnerabilities: ${{ needs.test-image-vulnerabilities.result }}"
-          echo "Health Test: ${{ needs.test-image-health.result }}"
+          echo "Image tests: Vulnerabilities=${{ needs.test-image-vulnerabilities.result }} Health=${{ needs.test-image-health.result }}"
           echo "Startup Test: ${{ needs.test-image-startup.result }}"
           echo "Size Test: ${{ needs.test-image-size.result }}"
           echo "Ports Test: ${{ needs.test-image-ports.result }}"
@@ -854,11 +761,6 @@ jobs:
           DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
           FULL_IMAGE_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
           
-          echo "=== Pushing Docker Image ==="
-          echo "Pushing to: $FULL_IMAGE_NAME"
-          echo "🔒 Note: Docker Hub encrypts images at rest automatically"
-          echo ""
-          
           # Push version tag
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
           echo "✅ Pushed: $FULL_IMAGE_NAME:$VERSION_TAG"
@@ -866,12 +768,7 @@ jobs:
           # Always push latest tag
           docker push $FULL_IMAGE_NAME:latest
           echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
-          
-          echo ""
-          echo "=== Push Complete ==="
-          echo "Image available at:"
-          echo "  docker pull $FULL_IMAGE_NAME:$VERSION_TAG"
-          echo "  docker pull $FULL_IMAGE_NAME:latest"
+
 
       - name: Cleanup Old Docker Hub Images
         continue-on-error: true
@@ -881,10 +778,7 @@ jobs:
           LOCAL_IMAGE_NAME="${{ needs.build-image.outputs.local_image_name }}"
           REPO_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
           
-          echo "=== Cleaning Up Old Images ==="
-          echo "Repository: $REPO_NAME"
-          echo "Policy: Keep last 5 images, delete older ones"
-          echo ""
+          echo "Cleaning up old images from: $REPO_NAME"
           
           # Get JWT token for Docker Hub API
           TOKEN=$(curl -s -H "Content-Type: application/json" \
@@ -914,7 +808,6 @@ jobs:
             DELETE_COUNT=$(echo "$TAGS_TO_DELETE" | wc -l)
             
             echo "Deleting $DELETE_COUNT old images..."
-            echo ""
             
             for TAG in $TAGS_TO_DELETE; do
               echo "Deleting tag: $TAG"
@@ -929,7 +822,6 @@ jobs:
               fi
             done
             
-            echo ""
             echo "✅ Cleanup complete: Deleted $DELETE_COUNT old images"
           else
             echo "✅ No cleanup needed: Only $TAG_COUNT images (keeping last 5)"
@@ -955,7 +847,6 @@ jobs:
       
       - name: Cleanup Summary
         run: |
-          echo "=== Artifact Cleanup ==="
-          echo "✅ Docker image artifact deleted from GitHub storage"
-          echo "Push Status: ${{ needs.push-image.result }}"
+          echo "✅ Artifact deleted from GitHub storage"
+          echo "Push: ${{ needs.push-image.result }}"
           echo "This frees up storage space and reduces costs"

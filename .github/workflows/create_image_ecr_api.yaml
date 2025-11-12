@@ -71,11 +71,7 @@ jobs:
       - name: Run ESLint
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          if npm run lint 2>/dev/null; then
-            echo "✅ Lint passed"
-          else
-            echo "⚠️ Lint script not configured - skipping"
-          fi
+          npm run lint 2>/dev/null || echo "⚠️ Lint not configured"
 
   unit-tests:
     name: Unit Tests
@@ -97,11 +93,7 @@ jobs:
       - name: Run Unit Tests
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          if npm test 2>/dev/null; then
-            echo "✅ Tests passed"
-          else
-            echo "⚠️ Test script not configured - skipping"
-          fi
+          npm test 2>/dev/null || echo "⚠️ Tests not configured"
 
   integration-tests:
     name: Integration Tests
@@ -123,11 +115,7 @@ jobs:
       - name: Run Integration Tests
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          if npm run test:integration 2>/dev/null; then
-            echo "✅ Integration tests passed"
-          else
-            echo "⚠️ Integration test script not configured - skipping"
-          fi
+          npm run test:integration 2>/dev/null || echo "⚠️ Integration tests not configured"
 
   security:
     name: Security Scan
@@ -180,31 +168,19 @@ jobs:
       - name: Validate package.json
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          echo "=== Validating package.json ==="
-          if [ -f "package.json" ]; then
-            if jq empty package.json 2>/dev/null; then
-              echo "✅ package.json is valid JSON"
-            else
-              echo "❌ package.json is invalid JSON"
-              exit 1
-            fi
-          else
-            echo "❌ package.json not found"
-            exit 1
-          fi
+          [ -f "package.json" ] || { echo "❌ package.json not found"; exit 1; }
+          jq empty package.json 2>/dev/null || { echo "❌ Invalid JSON"; exit 1; }
       
       - name: Check for outdated dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          echo "=== Checking for outdated dependencies ==="
           npm install
-          npm outdated || echo "⚠️ Some dependencies are outdated"
+          npm outdated || echo "⚠️ Outdated dependencies"
       
       - name: Check for duplicate dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          echo "=== Checking for duplicate dependencies ==="
-          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies found"
+          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies"
 
   license-check:
     name: License Compliance
@@ -228,36 +204,26 @@ jobs:
       
       - name: Check licenses (Summary)
         working-directory: ${{ env.DOCKERFILE_PATH }}
-        run: |
-          echo "=== License Summary ==="
-          license-checker --summary
+        run: license-checker --summary
       
       - name: Check licenses (Detailed)
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          echo "=== Detailed License Report ==="
           license-checker --json > licenses.json
           cat licenses.json
       
       - name: Check for prohibited licenses
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          echo "=== Checking for Prohibited Licenses ==="
           PROHIBITED="GPL|AGPL|LGPL"
-          
           if license-checker --json | jq -r '.[] | .licenses' | grep -iE "$PROHIBITED"; then
-            echo "⚠️ WARNING: Found potentially problematic licenses (GPL family)"
+            echo "⚠️ Problematic licenses found (GPL family)"
             license-checker --json | jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL"; "i")) | "\(.key): \(.value.licenses)"'
-          else
-            echo "✅ No prohibited licenses found"
           fi
       
       - name: Generate license report
         working-directory: ${{ env.DOCKERFILE_PATH }}
-        run: |
-          echo "=== Generating License Report ==="
-          license-checker --csv > license-report.csv
-          echo "✅ License report generated"
+        run: license-checker --csv > license-report.csv
       
       - name: Upload license report
         uses: actions/upload-artifact@v4
@@ -312,19 +278,15 @@ jobs:
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
-          # Combine base repository name with image name
           BASE_REPO="${{ inputs.ecr_repository_name }}"
           IMAGE_NAME="${{ inputs.image_name }}"
           FULL_REPO_NAME="$BASE_REPO/$IMAGE_NAME"
           
-          echo "Checking repository: $FULL_REPO_NAME"
-          
           if aws ecr describe-repositories --repository-names $FULL_REPO_NAME --region ${{ inputs.ecr_region }} 2>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Repository exists: $FULL_REPO_NAME"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Repository does not exist - will create: $FULL_REPO_NAME"
+            echo "⚠️ Repository will be created: $FULL_REPO_NAME"
           fi
           
           echo "full_repo_name=$FULL_REPO_NAME" >> $GITHUB_OUTPUT
@@ -334,8 +296,6 @@ jobs:
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           
-          echo "Creating repository: $FULL_REPO_NAME"
-          
           aws ecr create-repository \
             --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
@@ -343,56 +303,36 @@ jobs:
             --encryption-configuration encryptionType=AES256 \
             --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev Key=ImageName,Value=${{ inputs.image_name }}
           
-          echo "✅ Repository created successfully: $FULL_REPO_NAME"
-          echo "🔒 Encryption: AES256 enabled"
+          echo "✅ Repository created: $FULL_REPO_NAME"
 
       - name: Set ECR Lifecycle Policy
         continue-on-error: true
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           
-          echo "Setting lifecycle policy for: $FULL_REPO_NAME"
-          
-          # Create lifecycle policy JSON
           cat > /tmp/lifecycle-policy.json << 'EOF'
           {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep only last 5 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 5
-                },
-                "action": {
-                  "type": "expire"
-                }
-              }
-            ]
+            "rules": [{
+              "rulePriority": 1,
+              "description": "Keep only last 5 images",
+              "selection": {
+                "tagStatus": "any",
+                "countType": "imageCountMoreThan",
+                "countNumber": 5
+              },
+              "action": {"type": "expire"}
+            }]
           }
           EOF
           
-          # Try to apply lifecycle policy
           if aws ecr put-lifecycle-policy \
             --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
             --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null; then
-            echo "✅ Lifecycle policy set: Keep last 5 images, delete older ones"
-            echo "🗑️  Old images will be automatically cleaned up"
+            echo "✅ Lifecycle policy set (keep last 5 images)"
           else
-            echo "⚠️  Could not set lifecycle policy (missing permission: ecr:PutLifecyclePolicy)"
-            echo "📝 To enable automatic cleanup, add this permission to IAM role:"
-            echo "    Role: Role-GitHubActionsECRPushToRepo-api"
-            echo "    Permission: ecr:PutLifecyclePolicy"
-            echo ""
-            echo "Or manually set lifecycle policy:"
-            echo "    aws ecr put-lifecycle-policy \\"
-            echo "      --repository-name $FULL_REPO_NAME \\"
-            echo "      --region ${{ inputs.ecr_region }} \\"
-            echo "      --lifecycle-policy-text file://lifecycle-policy.json"
-            echo ""
-            echo "⏭️  Continuing without lifecycle policy..."
+            echo "⚠️ Missing permission: ecr:PutLifecyclePolicy"
+            echo "Add to IAM role: Role-GitHubActionsECRPushToRepo-api"
           fi
 
       - name: Get latest version from ECR
@@ -401,22 +341,15 @@ jobs:
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           
-          echo "Fetching tags from: $FULL_REPO_NAME"
-          
           TAGS=$(aws ecr describe-images \
             --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
             --query 'imageDetails[*].imageTags[*]' \
             --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
           
-          if [ -z "$TAGS" ]; then
-            LATEST_VERSION="0.0.0"
-          else
-            LATEST_VERSION="$TAGS"
-          fi
-          
+          LATEST_VERSION="${TAGS:-0.0.0}"
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
-          echo "Latest version found: $LATEST_VERSION"
+          echo "Latest version: $LATEST_VERSION"
 
       - name: Bump version
         id: bump
@@ -426,18 +359,9 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
           
           case "${{ inputs.version_bump }}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
           esac
           
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
@@ -452,58 +376,29 @@ jobs:
           FULL_IMAGE_NAME="$ECR_REGISTRY/$FULL_REPO_NAME"
           
           echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
-          echo "Full ECR image: $FULL_IMAGE_NAME"
           
-          if [ "${{ inputs.version_bump }}" = "none" ]; then
-            VERSION_TAG="latest"
-          else
-            VERSION_TAG="${{ steps.bump.outputs.new_version }}"
-          fi
+          VERSION_TAG="${{ inputs.version_bump == 'none' && 'latest' || steps.bump.outputs.new_version }}"
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
-          echo "Version tag: $VERSION_TAG"
+          echo "Image: $FULL_IMAGE_NAME:$VERSION_TAG"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Check Test Results
         run: |
-          echo "=== Test Results Summary ==="
-          echo "Lint: ${{ needs.lint.result }}"
-          echo "Unit Tests: ${{ needs.unit-tests.result }}"
-          echo "Integration Tests: ${{ needs.integration-tests.result }}"
-          echo "Security: ${{ needs.security.result }}"
-          echo "Dockerfile Lint: ${{ needs.dockerfile-lint.result }}"
-          echo "Dependency Check: ${{ needs.dependency-check.result }}"
-          echo "License Check: ${{ needs.license-check.result }}"
-          echo "Push on failure: ${{ inputs.push_on_test_failure }}"
-          
-          if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
-            echo "⚠️ Building image despite test failures (push_on_test_failure=yes)"
-          else
-            echo "✅ All tests passed, proceeding with build"
-          fi
+          echo "Tests: Lint=${{ needs.lint.result }} Unit=${{ needs.unit-tests.result }} Integration=${{ needs.integration-tests.result }}"
+          [ "${{ inputs.push_on_test_failure }}" = "yes" ] && echo "⚠️ Building despite test failures"
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          FULL_IMAGE_NAME="${{ steps.version.outputs.full_image_name }}"
-          IMAGE_URI=$FULL_IMAGE_NAME:$VERSION_TAG
-          
-          echo "=== Building Docker Image ==="
           docker build -t ${{ inputs.image_name }}:$VERSION_TAG .
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $IMAGE_URI
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $FULL_IMAGE_NAME:latest
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $FULL_IMAGE_NAME:${{ github.sha }}
-          echo "✅ Docker image built: $IMAGE_URI"
+          echo "✅ Built: ${{ inputs.image_name }}:$VERSION_TAG"
 
       - name: Save Docker Image
         run: |
-          VERSION_TAG="${{ steps.version.outputs.tag }}"
-          
-          echo "=== Saving Docker Image ==="
-          docker save ${{ inputs.image_name }}:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
-          echo "✅ Image saved"
+          docker save ${{ inputs.image_name }}:${{ steps.version.outputs.tag }} | gzip > /tmp/docker-image.tar.gz
 
       - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v4
