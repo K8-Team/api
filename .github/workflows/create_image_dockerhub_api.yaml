@@ -1,6 +1,6 @@
 name: Build Image to Docker Hub 
 
-# on:
+on:
 #   push:
 #     branches:
 #       - main
