@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_bump:
-        description: "Version bump type ('none' for 'latest' only)"
+        description: "Version bump type ('none' for tag 'latest' only)"
         required: true
         type: choice
         options:
@@ -287,7 +287,8 @@ jobs:
       image_tag: ${{ steps.version.outputs.tag }}
       image_name: ${{ steps.version.outputs.full_image_name }}
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
-      ecr_repository: ${{ inputs.ecr_repository_name }}
+      ecr_repository: ${{ steps.check-repo.outputs.full_repo_name }}
+      local_image_name: ${{ inputs.image_name }}
     
     steps:
       - name: Checkout code
@@ -311,34 +312,49 @@ jobs:
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
-          REPO_NAME="${{ inputs.ecr_repository_name }}"
-          if aws ecr describe-repositories --repository-names $REPO_NAME --region ${{ inputs.ecr_region }} 2>/dev/null; then
+          # Combine base repository name with image name
+          BASE_REPO="${{ inputs.ecr_repository_name }}"
+          IMAGE_NAME="${{ inputs.image_name }}"
+          FULL_REPO_NAME="$BASE_REPO/$IMAGE_NAME"
+          
+          echo "Checking repository: $FULL_REPO_NAME"
+          
+          if aws ecr describe-repositories --repository-names $FULL_REPO_NAME --region ${{ inputs.ecr_region }} 2>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Repository exists"
+            echo "✅ Repository exists: $FULL_REPO_NAME"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ Repository does not exist - will create"
+            echo "⚠️ Repository does not exist - will create: $FULL_REPO_NAME"
           fi
+          
+          echo "full_repo_name=$FULL_REPO_NAME" >> $GITHUB_OUTPUT
 
       - name: Create ECR Repository
         if: steps.check-repo.outputs.exists == 'false'
         run: |
-          REPO_NAME="${{ inputs.ecr_repository_name }}"
+          FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          
+          echo "Creating repository: $FULL_REPO_NAME"
+          
           aws ecr create-repository \
-            --repository-name $REPO_NAME \
+            --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
             --image-scanning-configuration scanOnPush=true \
             --encryption-configuration encryptionType=AES256 \
-            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev
-          echo "✅ Repository created successfully"
+            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev Key=ImageName,Value=${{ inputs.image_name }}
+          
+          echo "✅ Repository created successfully: $FULL_REPO_NAME"
 
       - name: Get latest version from ECR
         id: get-version
         if: inputs.version_bump != 'none'
         run: |
-          REPO_NAME="${{ inputs.ecr_repository_name }}"
+          FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          
+          echo "Fetching tags from: $FULL_REPO_NAME"
+          
           TAGS=$(aws ecr describe-images \
-            --repository-name $REPO_NAME \
+            --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
             --query 'imageDetails[*].imageTags[*]' \
             --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
@@ -382,9 +398,11 @@ jobs:
         id: version
         run: |
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
-          REPO_NAME="${{ inputs.ecr_repository_name }}"
-          FULL_IMAGE_NAME="$ECR_REGISTRY/$REPO_NAME"
+          FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          FULL_IMAGE_NAME="$ECR_REGISTRY/$FULL_REPO_NAME"
+          
           echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Full ECR image: $FULL_IMAGE_NAME"
           
           if [ "${{ inputs.version_bump }}" = "none" ]; then
             VERSION_TAG="latest"
@@ -392,7 +410,7 @@ jobs:
             VERSION_TAG="${{ steps.bump.outputs.new_version }}"
           fi
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
-          echo "Image will be tagged as: $VERSION_TAG"
+          echo "Version tag: $VERSION_TAG"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -860,14 +878,26 @@ jobs:
       - name: Tag Images for ECR
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
+          LOCAL_IMAGE="${{ needs.build-image.outputs.local_image_name }}"
           ECR_REGISTRY="${{ needs.build-image.outputs.ecr_registry }}"
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
           
           echo "=== Tagging images for ECR ==="
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:latest
-          docker tag ${{ inputs.image_name }}:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
-          echo "✅ Images tagged"
+          echo "Local image: $LOCAL_IMAGE:$VERSION_TAG"
+          echo "ECR repository: $ECR_REGISTRY/$ECR_REPO"
+          echo ""
+          
+          # Tag with version (e.g., v0.0.1)
+          docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG"
+          
+          # Tag as latest
+          docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:latest
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:latest"
+          
+          # Tag with commit SHA (for traceability)
+          docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}"
 
       - name: Check Image Test Results
         run: |
@@ -896,18 +926,30 @@ jobs:
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
           
           echo "=== Pushing Docker Images to ECR ==="
+          echo "Repository: $ECR_REGISTRY/$ECR_REPO"
+          echo "Tags: $VERSION_TAG, latest, ${{ github.sha }}"
+          echo ""
           
-          # Push version tag
+          # Push version tag (e.g., v0.0.1)
+          echo "Pushing version tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
           echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG"
+          echo ""
           
           # Push latest tag
+          echo "Pushing latest tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:latest
           echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:latest"
+          echo ""
           
-          # Push commit SHA tag
+          # Push commit SHA tag (for traceability)
+          echo "Pushing commit SHA tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
           echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}"
+          echo ""
+          
+          echo "=== Push Complete ==="
+          echo "All images pushed successfully to ECR!"
 
       - name: Get Image Details from ECR
         id: image-details
