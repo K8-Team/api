@@ -266,7 +266,7 @@ jobs:
         id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::841740285950:role/Role-GitHubActionsECRPushToRepo-api
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
           aws-region: ${{ inputs.ecr_region }}
           mask-aws-account-id: false
@@ -811,7 +811,7 @@ jobs:
         id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::841740285950:role/Role-GitHubActionsECRPushToRepo-api
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
           aws-region: ${{ inputs.ecr_region }}
           mask-aws-account-id: false
@@ -824,7 +824,7 @@ jobs:
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
           LOCAL_IMAGE="${{ needs.build-image.outputs.local_image_name }}"
-          ECR_REGISTRY="${{ needs.build-image.outputs.ecr_registry }}"
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
           
           echo "=== Tagging images for ECR ==="
@@ -867,7 +867,7 @@ jobs:
       - name: Push Docker Image to ECR
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
-          ECR_REGISTRY="${{ needs.build-image.outputs.ecr_registry }}"
+          ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
           
           echo "=== Pushing Docker Images to ECR ==="
@@ -980,7 +980,7 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Authentication" >> $GITHUB_STEP_SUMMARY
-          echo "🔐 **OIDC Authentication** - IAM Role: \`arn:aws:iam::841740285950:role/Role-GitHubActionsECRPushToRepo-api\`" >> $GITHUB_STEP_SUMMARY
+          echo "🔐 **OIDC Authentication** - IAM Role: \`arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**AWS Account:** \`${{ steps.aws-credentials.outputs.aws-account-id }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
