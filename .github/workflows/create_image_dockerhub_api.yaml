@@ -6,8 +6,7 @@ name: Build Image to Docker Hub
 #       - main
 #     paths-ignore:
 #       - '.github/workflows/**'
-#       - 'README.md
-
+#       - 'README.md'
   workflow_dispatch:
     inputs:
       version_bump:
