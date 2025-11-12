@@ -856,6 +856,8 @@ jobs:
           
           echo "=== Pushing Docker Image ==="
           echo "Pushing to: $FULL_IMAGE_NAME"
+          echo "🔒 Note: Docker Hub encrypts images at rest automatically"
+          echo ""
           
           # Push version tag
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
@@ -870,6 +872,68 @@ jobs:
           echo "Image available at:"
           echo "  docker pull $FULL_IMAGE_NAME:$VERSION_TAG"
           echo "  docker pull $FULL_IMAGE_NAME:latest"
+
+      - name: Cleanup Old Docker Hub Images
+        continue-on-error: true
+        run: |
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          DOCKERHUB_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
+          LOCAL_IMAGE_NAME="${{ needs.build-image.outputs.local_image_name }}"
+          REPO_NAME="$DOCKERHUB_USER/$LOCAL_IMAGE_NAME"
+          
+          echo "=== Cleaning Up Old Images ==="
+          echo "Repository: $REPO_NAME"
+          echo "Policy: Keep last 5 images, delete older ones"
+          echo ""
+          
+          # Get JWT token for Docker Hub API
+          TOKEN=$(curl -s -H "Content-Type: application/json" \
+            -X POST \
+            -d "{\"username\": \"$DOCKERHUB_USER\", \"password\": \"$DOCKERHUB_TOKEN\"}" \
+            https://hub.docker.com/v2/users/login/ | jq -r .token)
+          
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "⚠️ Could not authenticate with Docker Hub API"
+            echo "Skipping cleanup (images will remain)"
+            exit 0
+          fi
+          
+          # Get all tags sorted by last updated (excluding 'latest')
+          TAGS=$(curl -s -H "Authorization: JWT $TOKEN" \
+            "https://hub.docker.com/v2/repositories/$REPO_NAME/tags/?page_size=100" \
+            | jq -r '.results | sort_by(.last_updated) | reverse | .[].name' \
+            | grep -v '^latest$')
+          
+          # Count tags
+          TAG_COUNT=$(echo "$TAGS" | wc -l)
+          echo "Found $TAG_COUNT version tags (excluding 'latest')"
+          
+          # Keep only last 5, delete the rest
+          if [ $TAG_COUNT -gt 5 ]; then
+            TAGS_TO_DELETE=$(echo "$TAGS" | tail -n +6)
+            DELETE_COUNT=$(echo "$TAGS_TO_DELETE" | wc -l)
+            
+            echo "Deleting $DELETE_COUNT old images..."
+            echo ""
+            
+            for TAG in $TAGS_TO_DELETE; do
+              echo "Deleting tag: $TAG"
+              curl -s -X DELETE \
+                -H "Authorization: JWT $TOKEN" \
+                "https://hub.docker.com/v2/repositories/$REPO_NAME/tags/$TAG/" > /dev/null
+              
+              if [ $? -eq 0 ]; then
+                echo "  ✅ Deleted: $REPO_NAME:$TAG"
+              else
+                echo "  ⚠️ Failed to delete: $REPO_NAME:$TAG"
+              fi
+            done
+            
+            echo ""
+            echo "✅ Cleanup complete: Deleted $DELETE_COUNT old images"
+          else
+            echo "✅ No cleanup needed: Only $TAG_COUNT images (keeping last 5)"
+          fi
 
 
   # ============================================
