@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - './**'
-      - '.github/workflows/create_image_api_ecr.yaml'
+      
   workflow_dispatch:
     inputs:
       version_bump:
