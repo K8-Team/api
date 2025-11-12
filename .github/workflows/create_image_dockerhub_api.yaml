@@ -850,3 +850,4 @@ jobs:
           echo "✅ Artifact deleted from GitHub storage"
           echo "Push: ${{ needs.push-image.result }}"
           echo "This frees up storage space and reduces costs"
+
