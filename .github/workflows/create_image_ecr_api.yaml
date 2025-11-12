@@ -1,6 +1,12 @@
 name: Build Image to AWS ECR
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'NodeJsapp/**'
+      - '.github/workflows/create_image_api_ecr.yaml'
   workflow_dispatch:
     inputs:
       version_bump:
@@ -45,8 +51,55 @@ on:
         
 env:
   DOCKERFILE_PATH: '.'
+  # Default values for push events (when inputs are not available)
+  DEFAULT_VERSION_BUMP: "patch"
+  DEFAULT_PUSH_ON_TEST_FAILURE: "yes"
+  DEFAULT_IMAGE_NAME: "api"
+  DEFAULT_ECR_REGION: "us-east-1"
+  DEFAULT_ECR_REPOSITORY_NAME: "nodejs-nyan-app"
 
 jobs:
+  # ============================================
+  # SETUP CONFIGURATION
+  # ============================================
+  
+  setup:
+    name: Setup Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      version_bump: ${{ steps.config.outputs.version_bump }}
+      push_on_test_failure: ${{ steps.config.outputs.push_on_test_failure }}
+      image_name: ${{ steps.config.outputs.image_name }}
+      ecr_region: ${{ steps.config.outputs.ecr_region }}
+      ecr_repository_name: ${{ steps.config.outputs.ecr_repository_name }}
+    steps:
+      - name: Set Configuration
+        id: config
+        run: |
+          # Use workflow_dispatch inputs if available, otherwise use defaults
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version_bump=${{ inputs.version_bump }}" >> $GITHUB_OUTPUT
+            echo "push_on_test_failure=${{ inputs.push_on_test_failure }}" >> $GITHUB_OUTPUT
+            echo "image_name=${{ inputs.image_name }}" >> $GITHUB_OUTPUT
+            echo "ecr_region=${{ inputs.ecr_region }}" >> $GITHUB_OUTPUT
+            echo "ecr_repository_name=${{ inputs.ecr_repository_name }}" >> $GITHUB_OUTPUT
+            echo "📋 Using workflow_dispatch inputs"
+          else
+            echo "version_bump=${{ env.DEFAULT_VERSION_BUMP }}" >> $GITHUB_OUTPUT
+            echo "push_on_test_failure=${{ env.DEFAULT_PUSH_ON_TEST_FAILURE }}" >> $GITHUB_OUTPUT
+            echo "image_name=${{ env.DEFAULT_IMAGE_NAME }}" >> $GITHUB_OUTPUT
+            echo "ecr_region=${{ env.DEFAULT_ECR_REGION }}" >> $GITHUB_OUTPUT
+            echo "ecr_repository_name=${{ env.DEFAULT_ECR_REPOSITORY_NAME }}" >> $GITHUB_OUTPUT
+            echo "📋 Using default configuration for push event"
+          fi
+          
+          echo "✅ Configuration set:"
+          echo "  - Version bump: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.version_bump }}" || echo "${{ env.DEFAULT_VERSION_BUMP }}")"
+          echo "  - Push on test failure: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.push_on_test_failure }}" || echo "${{ env.DEFAULT_PUSH_ON_TEST_FAILURE }}")"
+          echo "  - Image name: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.image_name }}" || echo "${{ env.DEFAULT_IMAGE_NAME }}")"
+          echo "  - ECR region: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.ecr_region }}" || echo "${{ env.DEFAULT_ECR_REGION }}")"
+          echo "  - ECR repository: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.ecr_repository_name }}" || echo "${{ env.DEFAULT_ECR_REPOSITORY_NAME }}")"
+
   # ============================================
   # PRE-BUILD TESTS
   # ============================================
@@ -242,7 +295,7 @@ jobs:
   build-image:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, security, dockerfile-lint, dependency-check, license-check]
+    needs: [setup, lint, unit-tests, integration-tests, security, dockerfile-lint, dependency-check, license-check]
     if: ${{ always() }}
     environment: dev
     permissions:
@@ -254,7 +307,7 @@ jobs:
       image_name: ${{ steps.version.outputs.full_image_name }}
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
       ecr_repository: ${{ steps.check-repo.outputs.full_repo_name }}
-      local_image_name: ${{ inputs.image_name }}
+      local_image_name: ${{ needs.setup.outputs.image_name }}
     
     steps:
       - name: Checkout code
@@ -268,7 +321,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
-          aws-region: ${{ inputs.ecr_region }}
+          aws-region: ${{ needs.setup.outputs.ecr_region }}
           mask-aws-account-id: false
 
       - name: Login to Amazon ECR
@@ -278,11 +331,11 @@ jobs:
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
-          BASE_REPO="${{ inputs.ecr_repository_name }}"
-          IMAGE_NAME="${{ inputs.image_name }}"
+          BASE_REPO="${{ needs.setup.outputs.ecr_repository_name }}"
+          IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           FULL_REPO_NAME="$BASE_REPO/$IMAGE_NAME"
           
-          if aws ecr describe-repositories --repository-names $FULL_REPO_NAME --region ${{ inputs.ecr_region }} 2>/dev/null; then
+          if aws ecr describe-repositories --repository-names $FULL_REPO_NAME --region ${{ needs.setup.outputs.ecr_region }} 2>/dev/null; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
@@ -298,10 +351,10 @@ jobs:
           
           aws ecr create-repository \
             --repository-name $FULL_REPO_NAME \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --image-scanning-configuration scanOnPush=true \
             --encryption-configuration encryptionType=AES256 \
-            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev Key=ImageName,Value=${{ inputs.image_name }}
+            --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev Key=ImageName,Value=${{ needs.setup.outputs.image_name }}
           
           echo "✅ Repository created: $FULL_REPO_NAME"
 
@@ -327,7 +380,7 @@ jobs:
           
           if aws ecr put-lifecycle-policy \
             --repository-name $FULL_REPO_NAME \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null; then
             echo "✅ Lifecycle policy set (keep last 5 images)"
           else
@@ -337,13 +390,13 @@ jobs:
 
       - name: Get latest version from ECR
         id: get-version
-        if: inputs.version_bump != 'none'
+        if: needs.setup.outputs.version_bump != 'none'
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           
           TAGS=$(aws ecr describe-images \
             --repository-name $FULL_REPO_NAME \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[*].imageTags[*]' \
             --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
           
@@ -353,12 +406,12 @@ jobs:
 
       - name: Bump version
         id: bump
-        if: inputs.version_bump != 'none'
+        if: needs.setup.outputs.version_bump != 'none'
         run: |
           LATEST_VERSION="${{ steps.get-version.outputs.latest_version }}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
           
-          case "${{ inputs.version_bump }}" in
+          case "${{ needs.setup.outputs.version_bump }}" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
@@ -377,7 +430,7 @@ jobs:
           
           echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
           
-          VERSION_TAG="${{ inputs.version_bump == 'none' && 'latest' || steps.bump.outputs.new_version }}"
+          VERSION_TAG="${{ needs.setup.outputs.version_bump == 'none' && 'latest' || steps.bump.outputs.new_version }}"
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
           echo "Image: $FULL_IMAGE_NAME:$VERSION_TAG"
 
@@ -387,18 +440,18 @@ jobs:
       - name: Check Test Results
         run: |
           echo "Tests: Lint=${{ needs.lint.result }} Unit=${{ needs.unit-tests.result }} Integration=${{ needs.integration-tests.result }}"
-          [ "${{ inputs.push_on_test_failure }}" = "yes" ] && echo "⚠️ Building despite test failures"
+          [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ] && echo "⚠️ Building despite test failures"
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          docker build -t ${{ inputs.image_name }}:$VERSION_TAG .
-          echo "✅ Built: ${{ inputs.image_name }}:$VERSION_TAG"
+          docker build -t ${{ needs.setup.outputs.image_name }}:$VERSION_TAG .
+          echo "✅ Built: ${{ needs.setup.outputs.image_name }}:$VERSION_TAG"
 
       - name: Save Docker Image
         run: |
-          docker save ${{ inputs.image_name }}:${{ steps.version.outputs.tag }} | gzip > /tmp/docker-image.tar.gz
+          docker save ${{ needs.setup.outputs.image_name }}:${{ steps.version.outputs.tag }} | gzip > /tmp/docker-image.tar.gz
 
       - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v4
@@ -415,9 +468,9 @@ jobs:
   test-image-vulnerabilities:
     name: Scan Image Vulnerabilities
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -435,7 +488,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}'
+          image-ref: '${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}'
           format: 'table'
           exit-code: '0'
           ignore-unfixed: true
@@ -445,9 +498,9 @@ jobs:
   test-image-health:
     name: Test Image Health
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -464,7 +517,7 @@ jobs:
 
       - name: Test Health Endpoint
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Health Endpoint ==="
           docker run -d --name health-test \
@@ -493,9 +546,9 @@ jobs:
   test-image-startup:
     name: Test Image Startup
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -512,7 +565,7 @@ jobs:
 
       - name: Test Container Startup
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Container Startup ==="
           docker run -d --name startup-test \
@@ -540,9 +593,9 @@ jobs:
   test-image-size:
     name: Test Image Size
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -559,7 +612,7 @@ jobs:
 
       - name: Check Image Size
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking Image Size ==="
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
@@ -576,9 +629,9 @@ jobs:
   test-image-ports:
     name: Test Port Exposure
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -595,7 +648,7 @@ jobs:
 
       - name: Check Exposed Ports
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking Exposed Ports ==="
           EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
@@ -611,9 +664,9 @@ jobs:
   test-image-env-vars:
     name: Test Environment Variables
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -630,7 +683,7 @@ jobs:
 
       - name: Test with Missing Environment Variables
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing with Missing Env Vars ==="
           docker run -d --name env-test -p 3002:3000 $IMAGE_URI || true
@@ -650,9 +703,9 @@ jobs:
   test-image-security:
     name: Test Security (Non-root User)
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -669,7 +722,7 @@ jobs:
 
       - name: Check User Permissions
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Checking User Permissions ==="
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
@@ -683,9 +736,9 @@ jobs:
   test-image-shutdown:
     name: Test Graceful Shutdown
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
-    continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
+    continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
     
     steps:
       - name: Download Docker Image
@@ -702,7 +755,7 @@ jobs:
 
       - name: Test SIGTERM Handling
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Testing Graceful Shutdown ==="
           docker run -d --name shutdown-test \
@@ -754,7 +807,7 @@ jobs:
 
       - name: Analyze Image Layers
         run: |
-          IMAGE_URI="${{ inputs.image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           
           echo "=== Analyzing Image Layers ==="
           docker history $IMAGE_URI
@@ -788,7 +841,7 @@ jobs:
       test-image-shutdown,
       test-image-layers
     ]
-    if: ${{ always() && needs.build-image.result == 'success' && (inputs.push_on_test_failure == 'yes' || (needs.test-image-health.result == 'success' && needs.test-image-startup.result == 'success' && needs.test-image-size.result == 'success')) }}
+    if: ${{ always() && needs.build-image.result == 'success' && (needs.build-image.needs.setup.outputs.push_on_test_failure == 'yes' || (needs.test-image-health.result == 'success' && needs.test-image-startup.result == 'success' && needs.test-image-size.result == 'success')) }}
     environment: dev
     permissions:
       id-token: write
@@ -813,7 +866,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
-          aws-region: ${{ inputs.ecr_region }}
+          aws-region: ${{ needs.setup.outputs.ecr_region }}
           mask-aws-account-id: false
 
       - name: Login to Amazon ECR
@@ -856,9 +909,9 @@ jobs:
           echo "Security Test: ${{ needs.test-image-security.result }}"
           echo "Shutdown Test: ${{ needs.test-image-shutdown.result }}"
           echo "Layers Test: ${{ needs.test-image-layers.result }}"
-          echo "Push on failure: ${{ inputs.push_on_test_failure }}"
+          echo "Push on failure: ${{ needs.build-image.needs.setup.outputs.push_on_test_failure }}"
           
-          if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
+          if [ "${{ needs.build-image.needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
             echo "⚠️ Pushing image despite test failures (push_on_test_failure=yes)"
           else
             echo "✅ All image tests passed, proceeding with push"
@@ -905,7 +958,7 @@ jobs:
           IMAGE_DIGEST=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[0].imageDigest' \
             --output text)
           echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
@@ -913,7 +966,7 @@ jobs:
           IMAGE_SIZE=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[0].imageSizeInBytes' \
             --output text)
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
@@ -921,7 +974,7 @@ jobs:
           
           REPO_URI=$(aws ecr describe-repositories \
             --repository-names $ECR_REPO \
-            --region ${{ inputs.ecr_region }} \
+            --region ${{ needs.build-image.needs.setup.outputs.ecr_region }} \
             --query 'repositories[0].repositoryUri' \
             --output text)
           echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
@@ -936,7 +989,7 @@ jobs:
           echo "#### ECR Repository Details" >> $GITHUB_STEP_SUMMARY
           echo "**Repository Name:** \`${{ needs.build-image.outputs.ecr_repository }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Repository URI:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** \`${{ inputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** \`${{ needs.build-image.needs.setup.outputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
           echo "**Version Tag:** \`${{ needs.build-image.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
@@ -964,7 +1017,7 @@ jobs:
           echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
           echo "spec:" >> $GITHUB_STEP_SUMMARY
           echo "  containers:" >> $GITHUB_STEP_SUMMARY
-          echo "  - name: ${{ inputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: ${{ needs.build-image.needs.setup.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
           echo "    image: ${{ steps.image-details.outputs.repo_uri }}:${{ needs.build-image.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "    env:" >> $GITHUB_STEP_SUMMARY
           echo "    - name: DBUSER" >> $GITHUB_STEP_SUMMARY
