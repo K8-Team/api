@@ -71,11 +71,19 @@ jobs:
         id: config
         run: |
           # Use workflow_dispatch inputs or fallback to input defaults
-          VERSION_BUMP="${{ inputs.version_bump || 'patch' }}"
-          PUSH_ON_FAILURE="${{ inputs.push_on_test_failure || 'yes' }}"
-          IMAGE_NAME="${{ inputs.image_name || 'api' }}"
-          ECR_REGION="${{ inputs.ecr_region || 'us-east-1' }}"
-          ECR_REPO_NAME="${{ inputs.ecr_repository_name || 'nodejs-nyan-app' }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION_BUMP="${{ inputs.version_bump }}"
+            PUSH_ON_FAILURE="${{ inputs.push_on_test_failure }}"
+            IMAGE_NAME="${{ inputs.image_name }}"
+            ECR_REGION="${{ inputs.ecr_region }}"
+            ECR_REPO_NAME="${{ inputs.ecr_repository_name }}"
+          else
+            VERSION_BUMP="patch"
+            PUSH_ON_FAILURE="yes"
+            IMAGE_NAME="api"
+            ECR_REGION="us-east-1"
+            ECR_REPO_NAME="nodejs-nyan-app"
+          fi
           
           echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
           echo "push_on_test_failure=$PUSH_ON_FAILURE" >> $GITHUB_OUTPUT

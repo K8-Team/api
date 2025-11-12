@@ -50,9 +50,15 @@ jobs:
         id: config
         run: |
           # Use workflow_dispatch inputs or fallback to input defaults
-          VERSION_BUMP="${{ inputs.version_bump || 'patch' }}"
-          PUSH_ON_FAILURE="${{ inputs.push_on_test_failure || 'yes' }}"
-          IMAGE_NAME="${{ inputs.image_name || 'api' }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION_BUMP="${{ inputs.version_bump }}"
+            PUSH_ON_FAILURE="${{ inputs.push_on_test_failure }}"
+            IMAGE_NAME="${{ inputs.image_name }}"
+          else
+            VERSION_BUMP="patch"
+            PUSH_ON_FAILURE="yes"
+            IMAGE_NAME="api"
+          fi
           
           echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
           echo "push_on_test_failure=$PUSH_ON_FAILURE" >> $GITHUB_OUTPUT
