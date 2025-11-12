@@ -343,7 +343,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
-          aws-region: ${{ needs.setup.outputs.ecr_region }}
+          aws-region: ${{ needs.setup.outputs.ecr_region || 'us-east-1' }}
           mask-aws-account-id: false
 
       - name: Login to Amazon ECR
@@ -888,7 +888,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
-          aws-region: ${{ needs.setup.outputs.ecr_region }}
+          aws-region: ${{ needs.setup.outputs.ecr_region || 'us-east-1' }}
           mask-aws-account-id: false
 
       - name: Login to Amazon ECR
