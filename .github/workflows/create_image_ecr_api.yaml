@@ -1,4 +1,4 @@
-name: Build and Push Docker Image to ECR
+name: Build Image to AWS ECR
 
 on:
   workflow_dispatch:
