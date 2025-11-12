@@ -1,6 +1,13 @@
 name: Build Image to Docker Hub 
 
-on:
+# on:
+#   push:
+#     branches:
+#       - main
+#     paths-ignore:
+#       - '.github/workflows/**'
+#       - 'README.md
+
   workflow_dispatch:
     inputs:
       version_bump:
@@ -28,6 +35,41 @@ on:
         default: "api"
 
 jobs:
+  # ============================================
+  # SETUP CONFIGURATION
+  # ============================================
+  
+  setup:
+    name: Setup Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      version_bump: ${{ steps.config.outputs.version_bump }}
+      push_on_test_failure: ${{ steps.config.outputs.push_on_test_failure }}
+      image_name: ${{ steps.config.outputs.image_name }}
+    steps:
+      - name: Set Configuration
+        id: config
+        run: |
+          # Use workflow_dispatch inputs or fallback to input defaults
+          VERSION_BUMP="${{ inputs.version_bump || 'patch' }}"
+          PUSH_ON_FAILURE="${{ inputs.push_on_test_failure || 'yes' }}"
+          IMAGE_NAME="${{ inputs.image_name || 'api' }}"
+          
+          echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
+          echo "push_on_test_failure=$PUSH_ON_FAILURE" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "📋 Using workflow_dispatch inputs"
+          else
+            echo "📋 Using default configuration for push event"
+          fi
+          
+          echo "✅ Configuration set:"
+          echo "  - Version bump: $VERSION_BUMP"
+          echo "  - Push on test failure: $PUSH_ON_FAILURE"
+          echo "  - Image name: $IMAGE_NAME"
+
   # ============================================
   # PRE-BUILD TESTS
   # ============================================
@@ -208,7 +250,7 @@ jobs:
   build-image:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, security, dockerfile-lint, dependency-check, license-check]
+    needs: [setup, lint, unit-tests, integration-tests, security, dockerfile-lint, dependency-check, license-check]
     if: ${{ always() }}
     environment: dev
     permissions:
@@ -217,7 +259,7 @@ jobs:
     outputs:
       image_tag: ${{ steps.version.outputs.tag }}
       image_name: ${{ steps.version.outputs.full_image_name }}
-      local_image_name: ${{ inputs.image_name }}
+      local_image_name: ${{ needs.setup.outputs.image_name }}
     
     steps:
       - name: Checkout code
@@ -229,7 +271,7 @@ jobs:
         id: get-version
         if: inputs.version_bump != 'none'
         run: |
-          FULL_IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}"
+          FULL_IMAGE_NAME="${{ secrets.DOCKERHUB_USERNAME }}/${{ needs.setup.outputs.image_name }}"
           TAGS=$(curl -s "https://hub.docker.com/v2/repositories/$FULL_IMAGE_NAME/tags/?page_size=100" | jq -r '.results[].name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
           
           if [ -z "$TAGS" ]; then
@@ -247,7 +289,7 @@ jobs:
           LATEST_VERSION="${{ steps.get-version.outputs.latest_version }}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
           
-          case "${{ inputs.version_bump }}" in
+          case "${{ needs.setup.outputs.version_bump }}" in
             major)
               MAJOR=$((MAJOR + 1))
               MINOR=0
@@ -281,13 +323,13 @@ jobs:
         id: version
         run: |
           DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
-          IMAGE_NAME="${{ inputs.image_name }}"
+          IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           FULL_IMAGE_NAME="$DOCKERHUB_USER/$IMAGE_NAME"
           
           echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
           echo "Docker Hub image will be: $FULL_IMAGE_NAME"
           
-          if [ "${{ inputs.version_bump }}" = "none" ]; then
+          if [ "${{ needs.setup.outputs.version_bump }}" = "none" ]; then
             VERSION_TAG="latest"
           else
             VERSION_TAG="${{ steps.bump.outputs.new_version }}"
@@ -306,9 +348,9 @@ jobs:
           echo "Dockerfile Lint: ${{ needs.dockerfile-lint.result }}"
           echo "Dependency Check: ${{ needs.dependency-check.result }}"
           echo "License Check: ${{ needs.license-check.result }}"
-          echo "Push on failure: ${{ inputs.push_on_test_failure }}"
+          echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
           
-          if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
+          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
             echo "⚠️ Building image despite test failures (push_on_test_failure=yes)"
           else
             echo "✅ All tests passed, proceeding with build"
@@ -317,7 +359,7 @@ jobs:
       - name: Build Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
+          LOCAL_IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           
           docker build -t $LOCAL_IMAGE_NAME:$VERSION_TAG .
           echo "✅ Built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
@@ -325,7 +367,7 @@ jobs:
       - name: Save Docker Image
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
-          LOCAL_IMAGE_NAME="${{ inputs.image_name }}"
+          LOCAL_IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           
           docker save $LOCAL_IMAGE_NAME:$VERSION_TAG | gzip > /tmp/docker-image.tar.gz
 
@@ -344,7 +386,7 @@ jobs:
   test-image-vulnerabilities:
     name: Scan Image Vulnerabilities
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -371,7 +413,7 @@ jobs:
   test-image-health:
     name: Test Image Health
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -415,7 +457,7 @@ jobs:
   test-image-startup:
     name: Test Image Startup
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -458,7 +500,7 @@ jobs:
   test-image-size:
     name: Test Image Size
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -491,7 +533,7 @@ jobs:
   test-image-ports:
     name: Test Port Exposure
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -522,7 +564,7 @@ jobs:
   test-image-env-vars:
     name: Test Environment Variables
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -559,7 +601,7 @@ jobs:
   test-image-security:
     name: Test Security (Non-root User)
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -589,7 +631,7 @@ jobs:
   test-image-shutdown:
     name: Test Graceful Shutdown
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ inputs.push_on_test_failure == 'yes' }}
     
@@ -638,7 +680,7 @@ jobs:
   test-image-layers:
     name: Analyze Image Layers
     runs-on: ubuntu-latest
-    needs: [build-image]
+    needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: true
     
@@ -746,9 +788,9 @@ jobs:
           echo "Security Test: ${{ needs.test-image-security.result }}"
           echo "Shutdown Test: ${{ needs.test-image-shutdown.result }}"
           echo "Layers Test: ${{ needs.test-image-layers.result }}"
-          echo "Push on failure: ${{ inputs.push_on_test_failure }}"
+          echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
           
-          if [ "${{ inputs.push_on_test_failure }}" = "yes" ]; then
+          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
             echo "⚠️ Pushing image despite test failures (push_on_test_failure=yes)"
           else
             echo "✅ All image tests passed, proceeding with push"
@@ -850,3 +892,4 @@ jobs:
           echo "✅ Artifact deleted from GitHub storage"
           echo "Push: ${{ needs.push-image.result }}"
           echo "This frees up storage space and reduces costs"
+

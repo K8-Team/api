@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '.github/workflows/**'
+      - 'README.md
       
   workflow_dispatch:
     inputs:
@@ -49,12 +52,6 @@ on:
         
 env:
   DOCKERFILE_PATH: '.'
-  # Default values for push events (when inputs are not available)
-  DEFAULT_VERSION_BUMP: "patch"
-  DEFAULT_PUSH_ON_TEST_FAILURE: "yes"
-  DEFAULT_IMAGE_NAME: "api"
-  DEFAULT_ECR_REGION: "us-east-1"
-  DEFAULT_ECR_REPOSITORY_NAME: "nodejs-nyan-app"
 
 jobs:
   # ============================================
@@ -74,29 +71,40 @@ jobs:
       - name: Set Configuration
         id: config
         run: |
-          # Use workflow_dispatch inputs if available, otherwise use defaults
+          # Use workflow_dispatch inputs or fallback to input defaults
+          VERSION_BUMP="${{ inputs.version_bump || 'patch' }}"
+          PUSH_ON_FAILURE="${{ inputs.push_on_test_failure || 'yes' }}"
+          IMAGE_NAME="${{ inputs.image_name || 'api' }}"
+          ECR_REGION="${{ inputs.ecr_region || 'us-east-1' }}"
+          ECR_REPO_NAME="${{ inputs.ecr_repository_name || 'nodejs-nyan-app' }}"
+          
+          echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
+          echo "push_on_test_failure=$PUSH_ON_FAILURE" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "ecr_region=$ECR_REGION" >> $GITHUB_OUTPUT
+          echo "ecr_repository_name=$ECR_REPO_NAME" >> $GITHUB_OUTPUT
+          
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version_bump=${{ inputs.version_bump }}" >> $GITHUB_OUTPUT
-            echo "push_on_test_failure=${{ inputs.push_on_test_failure }}" >> $GITHUB_OUTPUT
-            echo "image_name=${{ inputs.image_name }}" >> $GITHUB_OUTPUT
-            echo "ecr_region=${{ inputs.ecr_region }}" >> $GITHUB_OUTPUT
-            echo "ecr_repository_name=${{ inputs.ecr_repository_name }}" >> $GITHUB_OUTPUT
             echo "📋 Using workflow_dispatch inputs"
           else
-            echo "version_bump=${{ env.DEFAULT_VERSION_BUMP }}" >> $GITHUB_OUTPUT
-            echo "push_on_test_failure=${{ env.DEFAULT_PUSH_ON_TEST_FAILURE }}" >> $GITHUB_OUTPUT
-            echo "image_name=${{ env.DEFAULT_IMAGE_NAME }}" >> $GITHUB_OUTPUT
-            echo "ecr_region=${{ env.DEFAULT_ECR_REGION }}" >> $GITHUB_OUTPUT
-            echo "ecr_repository_name=${{ env.DEFAULT_ECR_REPOSITORY_NAME }}" >> $GITHUB_OUTPUT
             echo "📋 Using default configuration for push event"
           fi
           
           echo "✅ Configuration set:"
-          echo "  - Version bump: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.version_bump }}" || echo "${{ env.DEFAULT_VERSION_BUMP }}")"
-          echo "  - Push on test failure: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.push_on_test_failure }}" || echo "${{ env.DEFAULT_PUSH_ON_TEST_FAILURE }}")"
-          echo "  - Image name: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.image_name }}" || echo "${{ env.DEFAULT_IMAGE_NAME }}")"
-          echo "  - ECR region: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.ecr_region }}" || echo "${{ env.DEFAULT_ECR_REGION }}")"
-          echo "  - ECR repository: $([ "${{ github.event_name }}" = "workflow_dispatch" ] && echo "${{ inputs.ecr_repository_name }}" || echo "${{ env.DEFAULT_ECR_REPOSITORY_NAME }}")"
+          echo "  - Version bump: $VERSION_BUMP"
+          echo "  - Push on test failure: $PUSH_ON_FAILURE"
+          echo "  - Image name: $IMAGE_NAME"
+          echo "  - ECR region: $ECR_REGION"
+          echo "  - ECR repository: $ECR_REPO_NAME"
+      
+      - name: Verify Configuration Outputs
+        run: |
+          echo "🔍 Verifying outputs are set correctly:"
+          echo "  - version_bump: ${{ steps.config.outputs.version_bump }}"
+          echo "  - push_on_test_failure: ${{ steps.config.outputs.push_on_test_failure }}"
+          echo "  - image_name: ${{ steps.config.outputs.image_name }}"
+          echo "  - ecr_region: ${{ steps.config.outputs.ecr_region }}"
+          echo "  - ecr_repository_name: ${{ steps.config.outputs.ecr_repository_name }}"
 
   # ============================================
   # PRE-BUILD TESTS
@@ -308,6 +316,15 @@ jobs:
       local_image_name: ${{ needs.setup.outputs.image_name }}
     
     steps:
+      - name: Debug Configuration
+        run: |
+          echo "🔍 Configuration received from setup job:"
+          echo "  - version_bump: ${{ needs.setup.outputs.version_bump }}"
+          echo "  - push_on_test_failure: ${{ needs.setup.outputs.push_on_test_failure }}"
+          echo "  - image_name: ${{ needs.setup.outputs.image_name }}"
+          echo "  - ecr_region: ${{ needs.setup.outputs.ecr_region }}"
+          echo "  - ecr_repository_name: ${{ needs.setup.outputs.ecr_repository_name }}"
+      
       - name: Checkout code
         uses: actions/checkout@v4
         with:
