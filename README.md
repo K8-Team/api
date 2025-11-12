@@ -23,18 +23,19 @@
 
 These variables need to be set
 
+## Workflow triggered on 'push' event to main branch of repo!!!
 
 ## Workflows Description
 Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
 
 
-## Installation - add to 'Repository secrets' folder in GitHub repo:
+### Installation - add to 'Repository secrets' folder in GitHub repo:
 - AWS_ACCOUNT_ID
 - DOCKERHUB_TOKEN
 - DOCKERHUB_USERNAME
 
 
-### Pre-Build Tests - These tests run before building the Docker image:
+## Pre-Build Tests - These tests run before building the Docker image:
 1. **Lint Test** - Runs ESLint to check code quality and style
 2. **Unit Tests** - Executes unit tests via npm test
 3. **Integration Tests** - Runs integration test suite
