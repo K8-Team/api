@@ -24,6 +24,12 @@
 These variables need to be set
 
 
+## Installation - add to 'Repository secrets' folder in GitHub repo:
+- AWS_ACCOUNT_ID
+- DOCKERHUB_TOKEN
+- DOCKERHUB_USERNAME
+
+
 ## Workflows Description
 Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support.
 
