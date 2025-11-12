@@ -347,6 +347,7 @@ jobs:
           echo "🔒 Encryption: AES256 enabled"
 
       - name: Set ECR Lifecycle Policy
+        continue-on-error: true
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           
@@ -372,14 +373,27 @@ jobs:
           }
           EOF
           
-          # Apply lifecycle policy
-          aws ecr put-lifecycle-policy \
+          # Try to apply lifecycle policy
+          if aws ecr put-lifecycle-policy \
             --repository-name $FULL_REPO_NAME \
             --region ${{ inputs.ecr_region }} \
-            --lifecycle-policy-text file:///tmp/lifecycle-policy.json
-          
-          echo "✅ Lifecycle policy set: Keep last 5 images, delete older ones"
-          echo "🗑️  Old images will be automatically cleaned up"
+            --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null; then
+            echo "✅ Lifecycle policy set: Keep last 5 images, delete older ones"
+            echo "🗑️  Old images will be automatically cleaned up"
+          else
+            echo "⚠️  Could not set lifecycle policy (missing permission: ecr:PutLifecyclePolicy)"
+            echo "📝 To enable automatic cleanup, add this permission to IAM role:"
+            echo "    Role: Role-GitHubActionsECRPushToRepo-api"
+            echo "    Permission: ecr:PutLifecyclePolicy"
+            echo ""
+            echo "Or manually set lifecycle policy:"
+            echo "    aws ecr put-lifecycle-policy \\"
+            echo "      --repository-name $FULL_REPO_NAME \\"
+            echo "      --region ${{ inputs.ecr_region }} \\"
+            echo "      --lifecycle-policy-text file://lifecycle-policy.json"
+            echo ""
+            echo "⏭️  Continuing without lifecycle policy..."
+          fi
 
       - name: Get latest version from ECR
         id: get-version
