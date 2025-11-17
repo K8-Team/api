@@ -1,4 +1,4 @@
-## ⚠️ Workflow triggeres on_event = 'push' to main branch of repo ⚠️
+## ⚠️ Workflow triggeres on: "event = push" to main branch of repo ⚠️
 
 
 ## Workflows Description
