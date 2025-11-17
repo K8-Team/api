@@ -462,7 +462,9 @@ jobs:
       - name: Check Test Results
         run: |
           echo "Tests: Lint=${{ needs.lint.result }} Unit=${{ needs.unit-tests.result }} Integration=${{ needs.integration-tests.result }}"
-          [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ] && echo "⚠️ Building despite test failures"
+          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
+            echo "⚠️ Building despite test failures"
+          fi
 
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
