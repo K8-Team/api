@@ -1,0 +1,99 @@
+def template = '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: kaniko
+  name: kaniko
+spec:
+  serviceAccountName: jenkins-kaniko
+  containers:
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:debug
+    command:
+    - /busybox/cat
+    tty: true
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+  - name: aws-cli
+    image: amazon/aws-cli:latest
+    command:
+    - cat
+    tty: true
+'''
+
+properties([
+    parameters([
+        string(
+            name: 'IMAGE_NAME',
+            defaultValue: 'api',
+            description: 'Image name'
+        ),
+        string(
+            name: 'ECR_REPO',
+            defaultValue: 'nodejs-nyan-app-jenkins',
+            description: 'ECR repository base name'
+        ),
+        string(
+            name: 'AWS_REGION',
+            defaultValue: 'us-east-1',
+            description: 'AWS region for ECR repository'
+        )
+    ])
+])
+
+
+podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
+    node("kaniko") {
+        container("kaniko"){
+            
+            stage("Checkout SCM") {
+                git branch: 'main', url: 'https://github.com/K8-Team/api.git'
+            }
+
+            withCredentials([string(credentialsId: 'ecr-creds', variable: 'AWS_ACCOUNT_ID')]) {
+                
+                stage("Create ECR Repository") {
+                    container("aws-cli") {
+                        sh """
+                        export AWS_REGION=${params.AWS_REGION}
+                        export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
+                        
+                        if ! aws ecr describe-repositories --repository-names "\${ECR_REPO_FULL}" --region "\${AWS_REGION}" 2>/dev/null; then
+                            aws ecr create-repository \\
+                                --repository-name "\${ECR_REPO_FULL}" \\
+                                --region "\${AWS_REGION}" \\
+                                --image-scanning-configuration scanOnPush=true \\
+                                --encryption-configuration encryptionType=AES256
+                            echo "Repository created: \${ECR_REPO_FULL}"
+                        fi
+                        """
+                    }
+                }
+                
+                stage("Build and Push to ECR with Kaniko") {
+                    container("kaniko") {
+                        sh """
+                    export AWS_REGION=${params.AWS_REGION}
+                    export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
+                    export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
+                                      
+                    /kaniko/executor \\
+                      --context=\${WORKSPACE} \\
+                      --dockerfile=Dockerfile \\
+                      --destination=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER} \\
+                      --destination=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:latest \\
+                      --cache=true \\
+                      --cache-ttl=24h
+                        """
+                    }
+                }
+            }
+        }
+    }
+}
