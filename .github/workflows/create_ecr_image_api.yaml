@@ -6,6 +6,7 @@ on:
       - main
     paths-ignore:
       - '.github/workflows/**'
+      - 'Jenkins/**'      
       - 'README.md'
   workflow_dispatch:
     inputs:
