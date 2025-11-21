@@ -1,9 +1,7 @@
-## ⚠️ Workflow triggeres on: "event = push" to main branch of repo ⚠️  
-
-
 ## Workflows Description
 Comprehensive testing suite with parallel execution; encrypted Docker images stored in the repository with retention of the five most recent versions (older ones automatically deleted); manually or PR-merge triggered builds; secure AWS OIDC authentication (no static access keys); automatic ECR repository creation with lifecycle policies for image retention and full multi-region support. If workflows triggers by push event and image fails tests - it will not push image to storage.
 
+## ⚠️ Workflow triggeres on: "event = push" to main branch of repo ⚠️
 
 ## Requirments - add to 'Repository secrets' folder in GitHub repo:
 - Add Roles and Policy permissions to GitHub Actions (run script or create manually OIDC)
