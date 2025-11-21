@@ -32,6 +32,20 @@ spec:
       limits:
         memory: "512Mi"
         cpu: "500m"
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    command:
+    - dockerd-entrypoint.sh
+    tty: true
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "300m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
   - name: aws-cli
     image: amazon/aws-cli:latest
     command:
@@ -73,49 +87,24 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
         stage("Run Tests") {
             container("nodejs") {
                 sh """
-                echo "=========================================="
-                echo "Running API Tests"
-                echo "=========================================="
-                
-                # Check if package.json exists
                 if [ ! -f "package.json" ]; then
-                    echo "❌ package.json not found!"
+                    echo "ERROR: package.json not found"
                     exit 1
                 fi
-                echo "✅ package.json found"
                 
-                # Install dependencies
-                echo ""
-                echo "Installing dependencies..."
                 npm install --production
-                echo "✅ Dependencies installed"
                 
-                # Check for syntax errors in main file
-                echo ""
-                echo "Checking for syntax errors..."
                 if [ -f "index.js" ]; then
-                    node -c index.js && echo "✅ index.js syntax OK" || exit 1
+                    node -c index.js || exit 1
                 elif [ -f "server.js" ]; then
-                    node -c server.js && echo "✅ server.js syntax OK" || exit 1
+                    node -c server.js || exit 1
                 elif [ -f "app.js" ]; then
-                    node -c app.js && echo "✅ app.js syntax OK" || exit 1
-                else
-                    echo "⚠️ No main file found (index.js, server.js, or app.js)"
+                    node -c app.js || exit 1
                 fi
                 
-                # Run npm test if test script exists
-                echo ""
                 if grep -q '\\"test\\"' package.json; then
-                    echo "Running npm test..."
-                    npm test || echo "⚠️ Tests failed but continuing..."
-                else
-                    echo "ℹ️ No test script defined in package.json"
+                    npm test || true
                 fi
-                
-                echo ""
-                echo "=========================================="
-                echo "✅ All tests passed!"
-                echo "=========================================="
                 """
             }
         }
@@ -140,20 +129,83 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
                     }
                 }
                 
-                stage("Build and Push to ECR with Kaniko") {
+                stage("Build Image") {
                     container("kaniko") {
                         sh """
                     export AWS_REGION=${params.AWS_REGION}
                     export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
                     export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
-                                      
+                    
                     /kaniko/executor \\
                       --context=\${WORKSPACE} \\
                       --dockerfile=Dockerfile \\
-                      --destination=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER} \\
-                      --destination=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:latest \\
+                      --destination=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER}-test \\
                       --cache=true \\
                       --cache-ttl=24h
+                        """
+                    }
+                }
+                
+                stage("Test Docker Image") {
+                    container("docker") {
+                        sh """
+                        export AWS_REGION=${params.AWS_REGION}
+                        export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
+                        export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
+                        export TEST_IMAGE=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER}-test
+                        
+                        sleep 5
+                        aws ecr get-login-password --region \${AWS_REGION} | docker login --username AWS --password-stdin \${ECR_REGISTRY}
+                        docker pull \${TEST_IMAGE}
+                        docker inspect \${TEST_IMAGE} --format='Size: {{.Size}} bytes'
+                        
+                        CONTAINER_ID=\$(docker run -d \${TEST_IMAGE})
+                        sleep 5
+                        
+                        if docker ps | grep -q \${CONTAINER_ID}; then
+                            docker logs \${CONTAINER_ID}
+                            docker stop \${CONTAINER_ID} || true
+                        else
+                            echo "ERROR: Container failed to start"
+                            docker logs \${CONTAINER_ID} || true
+                            exit 1
+                        fi
+                        
+                        docker rm \${CONTAINER_ID} || true
+                        """
+                    }
+                }
+                
+                stage("Push to ECR") {
+                    container("aws-cli") {
+                        sh """
+                        export AWS_REGION=${params.AWS_REGION}
+                        export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
+                        export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
+                        
+                        MANIFEST=\$(aws ecr batch-get-image \\
+                            --repository-name \${ECR_REPO_FULL} \\
+                            --image-ids imageTag=${BUILD_NUMBER}-test \\
+                            --region \${AWS_REGION} \\
+                            --query 'images[0].imageManifest' \\
+                            --output text)
+                        
+                        aws ecr put-image \\
+                            --repository-name \${ECR_REPO_FULL} \\
+                            --image-tag ${BUILD_NUMBER} \\
+                            --image-manifest "\${MANIFEST}" \\
+                            --region \${AWS_REGION}
+                        
+                        aws ecr put-image \\
+                            --repository-name \${ECR_REPO_FULL} \\
+                            --image-tag latest \\
+                            --image-manifest "\${MANIFEST}" \\
+                            --region \${AWS_REGION}
+                        
+                        aws ecr batch-delete-image \\
+                            --repository-name \${ECR_REPO_FULL} \\
+                            --image-ids imageTag=${BUILD_NUMBER}-test \\
+                            --region \${AWS_REGION}
                         """
                     }
                 }
