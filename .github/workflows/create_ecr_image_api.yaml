@@ -80,11 +80,6 @@ jobs:
             ECR_REGION="us-east-1"
             ECR_REPO_NAME="nodejs-nyan-app"
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          else
-          fi
-      - name: Verify Configuration Outputs
-        run: |
 
   lint:
     name: Lint Test
@@ -253,8 +248,6 @@ jobs:
       ecr_repository: ${{ steps.check-repo.outputs.full_repo_name }}
       local_image_name: ${{ needs.setup.outputs.image_name }}
     steps:
-      - name: Debug Configuration
-        run: |
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -307,12 +300,10 @@ jobs:
             }]
           }
           EOF
-          if aws ecr put-lifecycle-policy \
+          aws ecr put-lifecycle-policy \
             --repository-name $FULL_REPO_NAME \
             --region ${{ needs.setup.outputs.ecr_region }} \
-            --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null; then
-          else
-          fi
+            --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null || true
       - name: Get latest version from ECR
         id: get-version
         if: needs.setup.outputs.version_bump != 'none'
@@ -322,8 +313,9 @@ jobs:
             --repository-name $FULL_REPO_NAME \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[*].imageTags[*]' \
-            --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+            --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'$' | sed 's/^v//' | sort -V | tail -1)
           LATEST_VERSION="${TAGS:-0.0.0}"
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
       - name: Bump version
         id: bump
         if: needs.setup.outputs.version_bump != 'none'
@@ -336,6 +328,7 @@ jobs:
             patch) PATCH=$((PATCH + 1)) ;;
           esac
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
       - name: Set version tag and full image name
         id: version
         run: |
@@ -343,6 +336,8 @@ jobs:
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           FULL_IMAGE_NAME="$ECR_REGISTRY/$FULL_REPO_NAME"
           VERSION_TAG="${{ needs.setup.outputs.version_bump == 'none' && 'latest' || steps.bump.outputs.new_version }}"
+          echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+          echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Check Test Results
@@ -479,9 +474,6 @@ jobs:
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
-          if [ $IMAGE_SIZE_MB -gt 500 ]; then
-          else
-          fi
 
   test-image-ports:
     name: Test Port Exposure
@@ -553,9 +545,6 @@ jobs:
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
-          if [ -z "$USER" ] || [ "$USER" = "root" ] || [ "$USER" = "0" ]; then
-          else
-          fi
 
   test-image-shutdown:
     name: Test Graceful Shutdown
@@ -588,10 +577,7 @@ jobs:
           docker stop -t 10 shutdown-test
           END_TIME=$(date +%s)
           SHUTDOWN_TIME=$((END_TIME - START_TIME))
-          if [ $SHUTDOWN_TIME -lt 10 ]; then
-          else
-          fi
-          docker rm shutdown-test
+                    docker rm shutdown-test
 
   test-image-layers:
     name: Analyze Image Layers
@@ -613,9 +599,6 @@ jobs:
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
           docker history $IMAGE_URI
           LAYER_COUNT=$(docker history $IMAGE_URI --format "{{.ID}}" | wc -l)
-          if [ $LAYER_COUNT -gt 20 ]; then
-          else
-          fi
 
   push-image:
     name: Push Docker Image to ECR
@@ -667,12 +650,7 @@ jobs:
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:latest
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
-      - name: Check Image Test Results
-        run: |
-          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
-          else
-          fi
-      - name: Push Docker Image to ECR
+                - name: Push Docker Image to ECR
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
@@ -698,11 +676,14 @@ jobs:
             --query 'imageDetails[0].imageSizeInBytes' \
             --output text)
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+          echo "image_digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+          echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
           REPO_URI=$(aws ecr describe-repositories \
             --repository-names $ECR_REPO \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'repositories[0].repositoryUri' \
             --output text)
+          echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
       - name: Output Summary
         if: success()
         run: |
@@ -721,5 +702,3 @@ jobs:
         with:
           name: docker-image
           failOnError: false
-      - name: Cleanup Summary
-        run: |
