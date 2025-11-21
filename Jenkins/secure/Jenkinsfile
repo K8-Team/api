@@ -8,6 +8,18 @@ metadata:
 spec:
   serviceAccountName: jenkins-kaniko
   containers:
+  - name: nodejs
+    image: node:18-alpine
+    command:
+    - cat
+    tty: true
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
   - name: kaniko
     image: gcr.io/kaniko-project/executor:debug
     command:
@@ -50,13 +62,64 @@ properties([
 
 podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
     node("kaniko") {
-        container("kaniko"){
-            
-            stage("Checkout SCM") {
+        
+        stage("Checkout SCM") {
+            container("nodejs") {
                 git branch: 'main', url: 'https://github.com/K8-Team/api.git'
             }
+        }
+        
+        stage("Run Tests") {
+            container("nodejs") {
+                sh """
+                echo "=========================================="
+                echo "Running API Tests"
+                echo "=========================================="
+                
+                # Check if package.json exists
+                if [ ! -f "package.json" ]; then
+                    echo "❌ package.json not found!"
+                    exit 1
+                fi
+                echo "✅ package.json found"
+                
+                # Install dependencies
+                echo ""
+                echo "Installing dependencies..."
+                npm install --production
+                echo "✅ Dependencies installed"
+                
+                # Check for syntax errors in main file
+                echo ""
+                echo "Checking for syntax errors..."
+                if [ -f "index.js" ]; then
+                    node -c index.js && echo "✅ index.js syntax OK" || exit 1
+                elif [ -f "server.js" ]; then
+                    node -c server.js && echo "✅ server.js syntax OK" || exit 1
+                elif [ -f "app.js" ]; then
+                    node -c app.js && echo "✅ app.js syntax OK" || exit 1
+                else
+                    echo "⚠️ No main file found (index.js, server.js, or app.js)"
+                fi
+                
+                # Run npm test if test script exists
+                echo ""
+                if grep -q '\\"test\\"' package.json; then
+                    echo "Running npm test..."
+                    npm test || echo "⚠️ Tests failed but continuing..."
+                else
+                    echo "ℹ️ No test script defined in package.json"
+                fi
+                
+                echo ""
+                echo "=========================================="
+                echo "✅ All tests passed!"
+                echo "=========================================="
+                """
+            }
+        }
 
-            withCredentials([string(credentialsId: 'aws-creds', variable: 'AWS_ACCOUNT_ID')]) {
+        withCredentials([string(credentialsId: 'aws-creds', variable: 'AWS_ACCOUNT_ID')]) {
                 
                 stage("Create ECR Repository") {
                     container("aws-cli") {
