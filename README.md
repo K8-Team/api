@@ -12,7 +12,8 @@ Comprehensive testing suite with parallel execution; encrypted Docker images sto
 - DOCKERHUB_USERNAME
 
 
-## Pre-Build Tests - These tests run before building the Docker image:
+## GitHub Actions Pre-Build Tests  
+### These tests run before building the Docker image:
 1. **Lint Test** - Runs ESLint to check code quality and style
 2. **Unit Tests** - Executes unit tests via npm test
 3. **Integration Tests** - Runs integration test suite
@@ -34,7 +35,23 @@ Comprehensive testing suite with parallel execution; encrypted Docker images sto
 ---
 
 
-### Workflow scheme diagram
+
+## Jenkins Pipeline Tests
+
+### Node.js Code Validation Tests
+- **Package.json Existence** - Verifies that package.json file exists in the repository root
+- **Installing Production Dependencies** - Installs all production dependencies using npm to ensure the application can run
+- **Validating JavaScript Syntax** - Checks JavaScript syntax of the main application file for errors
+- **Running NPM Test Suite** - Executes npm test if a test script is defined in package.json
+
+### Docker Image Validation Tests
+- **Authenticating to ECR** - Verifies that the pipeline can successfully authenticate to AWS Elastic Container Registry
+- **Pulling Docker Image from ECR** - Confirms that the built Docker image can be pulled from ECR without errors
+- **Inspecting Docker Image** - Validates the Docker image metadata and checks the image size
+- **Starting Container from Image** - Tests that a container can be started from the image and runs without crashing
+
+
+## Workflow scheme diagram
 ```sh
 ┌─────────────────────────────────────────────────────────────┐
 │                    WORKFLOW TRIGGER                         │
