@@ -56,7 +56,7 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
                 git branch: 'main', url: 'https://github.com/K8-Team/api.git'
             }
 
-            withCredentials([string(credentialsId: 'ecr-creds', variable: 'AWS_ACCOUNT_ID')]) {
+            withCredentials([string(credentialsId: 'aws-creds', variable: 'AWS_ACCOUNT_ID')]) {
                 
                 stage("Create ECR Repository") {
                     container("aws-cli") {
