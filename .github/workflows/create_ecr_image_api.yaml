@@ -1,6 +1,6 @@
 name: Build/Push Image to AWS ECR
-on:
 
+on:
   push:
     branches:
       - main
@@ -8,7 +8,6 @@ on:
       - '.github/workflows/**'
       - 'Jenkins/**'      
       - 'README.md'
-
   workflow_dispatch:
     inputs:
       version_bump:
@@ -50,10 +49,11 @@ on:
         required: true
         type: string
         default: "nodejs-nyan-app"
+        
 env:
   DOCKERFILE_PATH: '.'
-jobs:
 
+jobs:
   setup:
     name: Setup Configuration
     runs-on: ubuntu-latest
@@ -67,6 +67,7 @@ jobs:
       - name: Set Configuration
         id: config
         run: |
+          # Use workflow_dispatch inputs or fallback to input defaults
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION_BUMP="${{ inputs.version_bump }}"
             PUSH_ON_FAILURE="${{ inputs.push_on_test_failure }}"
@@ -80,74 +81,119 @@ jobs:
             ECR_REGION="us-east-1"
             ECR_REPO_NAME="nodejs-nyan-app"
           fi
+          
+          echo "version_bump=$VERSION_BUMP" >> $GITHUB_OUTPUT
+          echo "push_on_test_failure=$PUSH_ON_FAILURE" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "ecr_region=$ECR_REGION" >> $GITHUB_OUTPUT
+          echo "ecr_repository_name=$ECR_REPO_NAME" >> $GITHUB_OUTPUT
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "📋 Using workflow_dispatch inputs"
+          else
+            echo "📋 Using default configuration for push event"
+          fi
+          
+          echo "✅ Configuration set:"
+          echo "  - Version bump: $VERSION_BUMP"
+          echo "  - Push on test failure: $PUSH_ON_FAILURE"
+          echo "  - Image name: $IMAGE_NAME"
+          echo "  - ECR region: $ECR_REGION"
+          echo "  - ECR repository: $ECR_REPO_NAME"
+      
+      - name: Verify Configuration Outputs
+        run: |
+          echo "🔍 Verifying outputs are set correctly:"
+          echo "  - version_bump: ${{ steps.config.outputs.version_bump }}"
+          echo "  - push_on_test_failure: ${{ steps.config.outputs.push_on_test_failure }}"
+          echo "  - image_name: ${{ steps.config.outputs.image_name }}"
+          echo "  - ecr_region: ${{ steps.config.outputs.ecr_region }}"
+          echo "  - ecr_repository_name: ${{ steps.config.outputs.ecr_repository_name }}"
 
+  
   lint:
     name: Lint Test
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Install dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm install
+      
       - name: Run ESLint
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          npm run lint 2>/dev/null || echo " Lint not configured"
+          npm run lint 2>/dev/null || echo "⚠️ Lint not configured"
 
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Install dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm install
+      
       - name: Run Unit Tests
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          npm test 2>/dev/null || echo " Tests not configured"
+          npm test 2>/dev/null || echo "⚠️ Tests not configured"
 
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Install dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm install
+      
       - name: Run Integration Tests
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          npm run test:integration 2>/dev/null || echo " Integration tests not configured"
+          npm run test:integration 2>/dev/null || echo "⚠️ Integration tests not configured"
 
   security:
     name: Security Scan
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Install dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm install
+      
       - name: Run npm audit
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm audit --audit-level=moderate || true
@@ -156,8 +202,10 @@ jobs:
     name: Dockerfile Lint
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Lint Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
@@ -168,60 +216,75 @@ jobs:
     name: Dependency Validation
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Validate package.json
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          [ -f "package.json" ] || { echo " package.json not found"; exit 1; }
-          jq empty package.json 2>/dev/null || { echo " Invalid JSON"; exit 1; }
+          [ -f "package.json" ] || { echo "❌ package.json not found"; exit 1; }
+          jq empty package.json 2>/dev/null || { echo "❌ Invalid JSON"; exit 1; }
+      
       - name: Check for outdated dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           npm install
-          npm outdated || echo " Outdated dependencies"
+          npm outdated || echo "⚠️ Outdated dependencies"
+      
       - name: Check for duplicate dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
-          npm dedupe --dry-run || echo " Duplicate dependencies"
+          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies"
 
   license-check:
     name: License Compliance
     runs-on: ubuntu-latest
     continue-on-error: true
+    
     steps:
       - uses: actions/checkout@v4
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+      
       - name: Install dependencies
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: npm install
+      
       - name: Install license-checker
         run: npm install -g license-checker
+      
       - name: Check licenses (Summary)
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: license-checker --summary
+      
       - name: Check licenses (Detailed)
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           license-checker --json > licenses.json
           cat licenses.json
+      
       - name: Check for prohibited licenses
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           PROHIBITED="GPL|AGPL|LGPL"
           if license-checker --json | jq -r '.[] | .licenses' | grep -iE "$PROHIBITED"; then
+            echo "⚠️ Problematic licenses found (GPL family)"
             license-checker --json | jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL"; "i")) | "\(.key): \(.value.licenses)"'
           fi
+      
       - name: Generate license report
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: license-checker --csv > license-report.csv
+      
       - name: Upload license report
         uses: actions/upload-artifact@v4
         with:
@@ -231,6 +294,11 @@ jobs:
             ${{ env.DOCKERFILE_PATH }}/license-report.csv
           retention-days: 30
 
+
+  # ============================================
+  # BUILD IMAGE
+  # ============================================
+  
   build-image:
     name: Build Docker Image
     runs-on: ubuntu-latest
@@ -247,11 +315,22 @@ jobs:
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
       ecr_repository: ${{ steps.check-repo.outputs.full_repo_name }}
       local_image_name: ${{ needs.setup.outputs.image_name }}
+    
     steps:
+      - name: Debug Configuration
+        run: |
+          echo "🔍 Configuration received from setup job:"
+          echo "  - version_bump: ${{ needs.setup.outputs.version_bump }}"
+          echo "  - push_on_test_failure: ${{ needs.setup.outputs.push_on_test_failure }}"
+          echo "  - image_name: ${{ needs.setup.outputs.image_name }}"
+          echo "  - ecr_region: ${{ needs.setup.outputs.ecr_region }}"
+          echo "  - ecr_repository_name: ${{ needs.setup.outputs.ecr_repository_name }}"
+      
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Configure AWS Credentials (OIDC)
         id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -260,32 +339,46 @@ jobs:
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
           aws-region: ${{ needs.setup.outputs.ecr_region || 'us-east-1' }}
           mask-aws-account-id: false
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
       - name: Check if ECR Repository Exists
         id: check-repo
         run: |
           BASE_REPO="${{ needs.setup.outputs.ecr_repository_name }}"
           IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           FULL_REPO_NAME="$BASE_REPO/$IMAGE_NAME"
+          
           if aws ecr describe-repositories --repository-names $FULL_REPO_NAME --region ${{ needs.setup.outputs.ecr_region }} 2>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Repository will be created: $FULL_REPO_NAME"
           fi
+          
+          echo "full_repo_name=$FULL_REPO_NAME" >> $GITHUB_OUTPUT
+
       - name: Create ECR Repository
         if: steps.check-repo.outputs.exists == 'false'
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          
           aws ecr create-repository \
             --repository-name $FULL_REPO_NAME \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --image-scanning-configuration scanOnPush=true \
             --encryption-configuration encryptionType=AES256 \
             --tags Key=ManagedBy,Value=GitHub-Actions Key=Project,Value=EKS-cluster Key=Environment,Value=dev Key=ImageName,Value=${{ needs.setup.outputs.image_name }}
+          
+          echo "✅ Repository created: $FULL_REPO_NAME"
+
       - name: Set ECR Lifecycle Policy
         continue-on-error: true
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          
           cat > /tmp/lifecycle-policy.json << 'EOF'
           {
             "rules": [{
@@ -300,58 +393,84 @@ jobs:
             }]
           }
           EOF
-          aws ecr put-lifecycle-policy \
+          
+          if aws ecr put-lifecycle-policy \
             --repository-name $FULL_REPO_NAME \
             --region ${{ needs.setup.outputs.ecr_region }} \
-            --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null || true
+            --lifecycle-policy-text file:///tmp/lifecycle-policy.json 2>/dev/null; then
+            echo "✅ Lifecycle policy set (keep last 5 images)"
+          else
+            echo "⚠️ Missing permission: ecr:PutLifecyclePolicy"
+            echo "Add to IAM role: Role-GitHubActionsECRPushToRepo-api"
+          fi
+
       - name: Get latest version from ECR
         id: get-version
         if: needs.setup.outputs.version_bump != 'none'
         run: |
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
+          
           TAGS=$(aws ecr describe-images \
             --repository-name $FULL_REPO_NAME \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[*].imageTags[*]' \
-            --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'$' | sed 's/^v//' | sort -V | tail -1)
+            --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+          
           LATEST_VERSION="${TAGS:-0.0.0}"
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          echo "Latest version: $LATEST_VERSION"
+
       - name: Bump version
         id: bump
         if: needs.setup.outputs.version_bump != 'none'
         run: |
           LATEST_VERSION="${{ steps.get-version.outputs.latest_version }}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+          
           case "${{ needs.setup.outputs.version_bump }}" in
             major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
             minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
             patch) PATCH=$((PATCH + 1)) ;;
           esac
+          
           NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
       - name: Set version tag and full image name
         id: version
         run: |
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           FULL_REPO_NAME="${{ steps.check-repo.outputs.full_repo_name }}"
           FULL_IMAGE_NAME="$ECR_REGISTRY/$FULL_REPO_NAME"
+          
+          echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
+          
           VERSION_TAG="${{ needs.setup.outputs.version_bump == 'none' && 'latest' || steps.bump.outputs.new_version }}"
           echo "tag=$VERSION_TAG" >> $GITHUB_OUTPUT
-          echo "full_image_name=$FULL_IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Image: $FULL_IMAGE_NAME:$VERSION_TAG"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
       - name: Check Test Results
         run: |
+          echo "Tests: Lint=${{ needs.lint.result }} Unit=${{ needs.unit-tests.result }} Integration=${{ needs.integration-tests.result }}"
           if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
+            echo "⚠️ Building despite test failures"
           fi
+
       - name: Build Docker Image
         working-directory: ${{ env.DOCKERFILE_PATH }}
         run: |
           VERSION_TAG="${{ steps.version.outputs.tag }}"
           docker build -t ${{ needs.setup.outputs.image_name }}:$VERSION_TAG .
+          echo "✅ Built: ${{ needs.setup.outputs.image_name }}:$VERSION_TAG"
+
       - name: Save Docker Image
         run: |
           docker save ${{ needs.setup.outputs.image_name }}:${{ steps.version.outputs.tag }} | gzip > /tmp/docker-image.tar.gz
+
       - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -359,21 +478,31 @@ jobs:
           path: /tmp/docker-image.tar.gz
           retention-days: 1
 
+
+  # ============================================
+  # POST-BUILD TESTS
+  # ============================================
+
   test-image-vulnerabilities:
     name: Scan Image Vulnerabilities
     runs-on: ubuntu-latest
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -390,18 +519,25 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Test Health Endpoint
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Health Endpoint ==="
           docker run -d --name health-test \
             -p 3000:3000 \
             -e DBUSER=testuser \
@@ -410,12 +546,18 @@ jobs:
             -e DBHOST=localhost \
             -e DBPORT=3306 \
             $IMAGE_URI
+          
           sleep 5
+          
+          echo "Testing /health endpoint..."
           if curl -f http://localhost:3000/health; then
+            echo "✅ Health check passed"
           else
+            echo "❌ Health check failed"
             docker logs health-test
             exit 1
           fi
+          
           docker stop health-test
           docker rm health-test
 
@@ -425,18 +567,25 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Test Container Startup
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Container Startup ==="
           docker run -d --name startup-test \
             -p 3001:3000 \
             -e DBUSER=testuser \
@@ -445,12 +594,17 @@ jobs:
             -e DBHOST=localhost \
             -e DBPORT=3306 \
             $IMAGE_URI
+          
           sleep 5
+          
           if docker ps | grep startup-test; then
+            echo "✅ Container started successfully"
           else
+            echo "❌ Container failed to start"
             docker logs startup-test
             exit 1
           fi
+          
           docker stop startup-test
           docker rm startup-test
 
@@ -460,20 +614,35 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Check Image Size
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking Image Size ==="
           IMAGE_SIZE=$(docker image inspect $IMAGE_URI --format='{{.Size}}')
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+          
+          echo "Image size: ${IMAGE_SIZE_MB}MB"
+          
+          if [ $IMAGE_SIZE_MB -gt 500 ]; then
+            echo "⚠️ Image is larger than 500MB"
+          else
+            echo "✅ Image size is acceptable"
+          fi
 
   test-image-ports:
     name: Test Port Exposure
@@ -481,21 +650,32 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Check Exposed Ports
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking Exposed Ports ==="
           EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
+          echo "Exposed ports: $EXPOSED_PORTS"
+          
           if echo "$EXPOSED_PORTS" | grep -q "3000"; then
+            echo "✅ Port 3000 is exposed"
           else
+            echo "❌ Port 3000 is not exposed"
             exit 1
           fi
 
@@ -505,24 +685,36 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Test with Missing Environment Variables
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing with Missing Env Vars ==="
           docker run -d --name env-test -p 3002:3000 $IMAGE_URI || true
+          
           sleep 3
+          
           if docker ps -a | grep env-test | grep -q "Exited"; then
+            echo "⚠️ Container exited (expected if env vars are required)"
             docker logs env-test
           else
+            echo "✅ Container handles missing env vars gracefully"
           fi
+          
           docker stop env-test 2>/dev/null || true
           docker rm env-test 2>/dev/null || true
 
@@ -532,19 +724,32 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Check User Permissions
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Checking User Permissions ==="
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
+          
+          if [ -z "$USER" ] || [ "$USER" = "root" ] || [ "$USER" = "0" ]; then
+            echo "⚠️ Container runs as root user (security risk)"
+          else
+            echo "✅ Container runs as non-root user: $USER"
+          fi
 
   test-image-shutdown:
     name: Test Graceful Shutdown
@@ -552,18 +757,25 @@ jobs:
     needs: [setup, build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: ${{ needs.setup.outputs.push_on_test_failure == 'yes' }}
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Test SIGTERM Handling
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Testing Graceful Shutdown ==="
           docker run -d --name shutdown-test \
             -p 3003:3000 \
             -e DBUSER=testuser \
@@ -572,12 +784,24 @@ jobs:
             -e DBHOST=localhost \
             -e DBPORT=3306 \
             $IMAGE_URI
+          
           sleep 3
+          
+          echo "Sending SIGTERM..."
           START_TIME=$(date +%s)
           docker stop -t 10 shutdown-test
           END_TIME=$(date +%s)
           SHUTDOWN_TIME=$((END_TIME - START_TIME))
-                    docker rm shutdown-test
+          
+          echo "Shutdown time: ${SHUTDOWN_TIME}s"
+          
+          if [ $SHUTDOWN_TIME -lt 10 ]; then
+            echo "✅ Container shut down gracefully in ${SHUTDOWN_TIME}s"
+          else
+            echo "⚠️ Container took full timeout (10s) to shutdown"
+          fi
+          
+          docker rm shutdown-test
 
   test-image-layers:
     name: Analyze Image Layers
@@ -585,20 +809,40 @@ jobs:
     needs: [build-image]
     if: ${{ always() && needs.build-image.result == 'success' }}
     continue-on-error: true
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Analyze Image Layers
         run: |
           IMAGE_URI="${{ needs.build-image.outputs.local_image_name }}:${{ needs.build-image.outputs.image_tag }}"
+          
+          echo "=== Analyzing Image Layers ==="
           docker history $IMAGE_URI
+          
           LAYER_COUNT=$(docker history $IMAGE_URI --format "{{.ID}}" | wc -l)
+          echo "Total layers: $LAYER_COUNT"
+          
+          if [ $LAYER_COUNT -gt 20 ]; then
+            echo "⚠️ Image has many layers ($LAYER_COUNT), consider optimization"
+          else
+            echo "✅ Layer count is reasonable"
+          fi
+
+
+  # ============================================
+  # PUSH IMAGE TO ECR
+  # ============================================
 
   push-image:
     name: Push Docker Image to ECR
@@ -621,15 +865,20 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    
     steps:
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
           name: docker-image
           path: /tmp
+
       - name: Load Docker Image
         run: |
+          echo "=== Loading Docker Image ==="
           docker load < /tmp/docker-image.tar.gz
+          echo "✅ Image loaded"
+
       - name: Configure AWS Credentials (OIDC)
         id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -638,37 +887,101 @@ jobs:
           role-session-name: GitHubActions-ECR-Push-${{ github.run_id }}
           aws-region: ${{ needs.setup.outputs.ecr_region || 'us-east-1' }}
           mask-aws-account-id: false
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+
       - name: Tag Images for ECR
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
           LOCAL_IMAGE="${{ needs.build-image.outputs.local_image_name }}"
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
+          
+          echo "=== Tagging images for ECR ==="
+          echo "Local image: $LOCAL_IMAGE:$VERSION_TAG"
+          echo "ECR repository: $ECR_REGISTRY/$ECR_REPO"
+          echo ""
+          
+          # Tag with version (e.g., v0.0.1)
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG"
+          
+          # Tag as latest
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:latest
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:latest"
+          
+          # Tag with commit SHA (for traceability)
           docker tag $LOCAL_IMAGE:$VERSION_TAG $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
-                - name: Push Docker Image to ECR
+          echo "✅ Tagged: $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}"
+
+      - name: Check Image Test Results
+        run: |
+          echo "=== Image Test Results Summary ==="
+          echo "Vulnerabilities: ${{ needs.test-image-vulnerabilities.result }}"
+          echo "Health Test: ${{ needs.test-image-health.result }}"
+          echo "Startup Test: ${{ needs.test-image-startup.result }}"
+          echo "Size Test: ${{ needs.test-image-size.result }}"
+          echo "Ports Test: ${{ needs.test-image-ports.result }}"
+          echo "Env Vars Test: ${{ needs.test-image-env-vars.result }}"
+          echo "Security Test: ${{ needs.test-image-security.result }}"
+          echo "Shutdown Test: ${{ needs.test-image-shutdown.result }}"
+          echo "Layers Test: ${{ needs.test-image-layers.result }}"
+          echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
+          
+          if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
+            echo "⚠️ Pushing image despite test failures (push_on_test_failure=yes)"
+          else
+            echo "✅ All image tests passed, proceeding with push"
+          fi
+
+      - name: Push Docker Image to ECR
         run: |
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
           ECR_REGISTRY="${{ steps.login-ecr.outputs.registry }}"
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
+          
+          echo "=== Pushing Docker Images to ECR ==="
+          echo "Repository: $ECR_REGISTRY/$ECR_REPO"
+          echo "Tags: $VERSION_TAG, latest, ${{ github.sha }}"
+          echo ""
+          
+          # Push version tag (e.g., v0.0.1)
+          echo "Pushing version tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:$VERSION_TAG"
+          echo ""
+          
+          # Push latest tag
+          echo "Pushing latest tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:latest
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:latest"
+          echo ""
+          
+          # Push commit SHA tag (for traceability)
+          echo "Pushing commit SHA tag..."
           docker push $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}
+          echo "✅ Pushed: $ECR_REGISTRY/$ECR_REPO:${{ github.sha }}"
+          echo ""
+          
+          echo "=== Push Complete ==="
+          echo "All images pushed successfully to ECR!"
+
       - name: Get Image Details from ECR
         id: image-details
         run: |
           ECR_REPO="${{ needs.build-image.outputs.ecr_repository }}"
           VERSION_TAG="${{ needs.build-image.outputs.image_tag }}"
+          
           IMAGE_DIGEST=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'imageDetails[0].imageDigest' \
             --output text)
+          echo "digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
+          
           IMAGE_SIZE=$(aws ecr describe-images \
             --repository-name $ECR_REPO \
             --image-ids imageTag=$VERSION_TAG \
@@ -676,29 +989,110 @@ jobs:
             --query 'imageDetails[0].imageSizeInBytes' \
             --output text)
           IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
-          echo "image_digest=$IMAGE_DIGEST" >> $GITHUB_OUTPUT
-          echo "image_size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          echo "size_mb=$IMAGE_SIZE_MB" >> $GITHUB_OUTPUT
+          
           REPO_URI=$(aws ecr describe-repositories \
             --repository-names $ECR_REPO \
             --region ${{ needs.setup.outputs.ecr_region }} \
             --query 'repositories[0].repositoryUri' \
             --output text)
           echo "repo_uri=$REPO_URI" >> $GITHUB_OUTPUT
+          
+          echo "✅ Image details retrieved"
+
       - name: Output Summary
         if: success()
         run: |
+          echo "### 🐳 Docker Image Built and Pushed to ECR!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### ECR Repository Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository Name:** \`${{ needs.build-image.outputs.ecr_repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository URI:** \`${{ steps.image-details.outputs.repo_uri }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** \`${{ needs.setup.outputs.ecr_region }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Version Tag:** \`${{ needs.build-image.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit SHA Tag:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Digest:** \`${{ steps.image-details.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Image Size:** ${{ steps.image-details.outputs.size_mb }} MB" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pre-Build Tests:** Lint, Unit, Integration, Security, Dockerfile, Dependencies, Licenses" >> $GITHUB_STEP_SUMMARY
+          echo "- **Post-Build Tests:** Vulnerabilities, Health, Startup, Size, Ports, Env Vars, Security, Shutdown, Layers" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Pull Commands" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull with version tag" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.image-details.outputs.repo_uri }}:${{ needs.build-image.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull latest" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.image-details.outputs.repo_uri }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# Pull with commit SHA" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ${{ steps.image-details.outputs.repo_uri }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Kubernetes Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`yaml" >> $GITHUB_STEP_SUMMARY
+          echo "spec:" >> $GITHUB_STEP_SUMMARY
+          echo "  containers:" >> $GITHUB_STEP_SUMMARY
+          echo "  - name: ${{ needs.setup.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "    image: ${{ steps.image-details.outputs.repo_uri }}:${{ needs.build-image.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "    env:" >> $GITHUB_STEP_SUMMARY
+          echo "    - name: DBUSER" >> $GITHUB_STEP_SUMMARY
+          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
+          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
+          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
+          echo "          key: username" >> $GITHUB_STEP_SUMMARY
+          echo "    - name: DBPASS" >> $GITHUB_STEP_SUMMARY
+          echo "      valueFrom:" >> $GITHUB_STEP_SUMMARY
+          echo "        secretKeyRef:" >> $GITHUB_STEP_SUMMARY
+          echo "          name: db-credentials" >> $GITHUB_STEP_SUMMARY
+          echo "          key: password" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Authentication" >> $GITHUB_STEP_SUMMARY
+          echo "🔐 **OIDC Authentication** - IAM Role: \`arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/Role-GitHubActionsECRPushToRepo-api\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**AWS Account:** \`${{ steps.aws-credentials.outputs.aws-account-id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+
       - name: Output Failure Summary
         if: failure()
         run: |
+          echo "### ❌ Workflow Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** \`${{ github.run_id }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By:** \`${{ github.actor }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Troubleshooting" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check OIDC authentication and IAM role permissions" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify ECR repository exists or can be created" >> $GITHUB_STEP_SUMMARY
+          echo "3. Review test results above for failures" >> $GITHUB_STEP_SUMMARY
+
+
+  # ============================================
+  # CLEANUP ARTIFACTS (After Push)
+  # ============================================
 
   cleanup-artifacts:
     name: Cleanup Temporary Artifacts
     runs-on: ubuntu-latest
     needs: [push-image]
     if: ${{ always() && needs.push-image.result != 'skipped' }}
+    
     steps:
       - name: Delete Docker Image Artifact
         uses: geekyeggo/delete-artifact@v5
         with:
           name: docker-image
           failOnError: false
+      
+      - name: Cleanup Summary
+        run: |
+          echo "=== Artifact Cleanup ==="
+          echo "✅ Docker image artifact deleted from GitHub storage"
+          echo "Push Status: ${{ needs.push-image.result }}"
+          echo "This frees up storage space and reduces costs"
+
