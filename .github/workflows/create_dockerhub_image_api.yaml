@@ -65,12 +65,12 @@ jobs:
           echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
           
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "📋 Using workflow_dispatch inputs"
+            echo "Using workflow_dispatch inputs"
           else
-            echo "📋 Using default configuration for push event"
+            echo "Using default configuration for push event"
           fi
           
-          echo "✅ Configuration set:"
+          echo "Configuration set:"
           echo "  - Version bump: $VERSION_BUMP"
           echo "  - Push on test failure: $PUSH_ON_FAILURE"
           echo "  - Image name: $IMAGE_NAME"
@@ -97,7 +97,7 @@ jobs:
       
       - name: Run ESLint
         run: |
-          npm run lint 2>/dev/null || echo "⚠️ Lint not configured"
+          npm run lint 2>/dev/null || echo "Lint not configured"
 
   unit-tests:
     name: Unit Tests
@@ -117,7 +117,7 @@ jobs:
       
       - name: Run Unit Tests
         run: |
-          npm test 2>/dev/null || echo "⚠️ Tests not configured"
+          npm test 2>/dev/null || echo "Tests not configured"
 
   integration-tests:
     name: Integration Tests
@@ -137,7 +137,7 @@ jobs:
       
       - name: Run Integration Tests
         run: |
-          npm run test:integration 2>/dev/null || echo "⚠️ Integration tests not configured"
+          npm run test:integration 2>/dev/null || echo "Integration tests not configured"
 
   security:
     name: Security Scan
@@ -188,17 +188,17 @@ jobs:
       
       - name: Validate package.json
         run: |
-          [ -f "package.json" ] || { echo "❌ package.json not found"; exit 1; }
-          jq empty package.json 2>/dev/null || { echo "❌ Invalid JSON"; exit 1; }
+          [ -f "package.json" ] || { echo "package.json not found"; exit 1; }
+          jq empty package.json 2>/dev/null || { echo "Invalid JSON"; exit 1; }
       
       - name: Check for outdated dependencies
         run: |
           npm install
-          npm outdated || echo "⚠️ Outdated dependencies"
+          npm outdated || echo "Outdated dependencies"
       
       - name: Check for duplicate dependencies
         run: |
-          npm dedupe --dry-run || echo "⚠️ Duplicate dependencies"
+          npm dedupe --dry-run || echo "Duplicate dependencies"
 
   # NEW: License compliance check
   license-check:
@@ -232,7 +232,7 @@ jobs:
         run: |
           PROHIBITED="GPL|AGPL|LGPL"
           if license-checker --json | jq -r '.[] | .licenses' | grep -iE "$PROHIBITED"; then
-            echo "⚠️ Problematic licenses found (GPL family)"
+            echo "Problematic licenses found (GPL family)"
             license-checker --json | jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL"; "i")) | "\(.key): \(.value.licenses)"'
           fi
       
@@ -315,14 +315,14 @@ jobs:
       - name: Validate Docker Hub Username
         run: |
           if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ]; then
-            echo "❌ ERROR: DOCKERHUB_USERNAME secret is not set!"
+            echo "ERROR: DOCKERHUB_USERNAME secret is not set!"
             echo "Please add the DOCKERHUB_USERNAME secret to your repository:"
             echo "Settings → Secrets and variables → Actions → New repository secret"
             echo "Name: DOCKERHUB_USERNAME"
             echo "Value: Your Docker Hub username"
             exit 1
           fi
-          echo "✅ DOCKERHUB_USERNAME secret is set"
+          echo "DOCKERHUB_USERNAME secret is set"
 
       - name: Set version tag and full image name
         id: version
@@ -356,9 +356,9 @@ jobs:
           echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
           
           if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
-            echo "⚠️ Building image despite test failures (push_on_test_failure=yes)"
+            echo "Building image despite test failures (push_on_test_failure=yes)"
           else
-            echo "✅ All tests passed, proceeding with build"
+            echo "All tests passed, proceeding with build"
           fi
 
       - name: Build Docker Image
@@ -367,7 +367,7 @@ jobs:
           LOCAL_IMAGE_NAME="${{ needs.setup.outputs.image_name }}"
           
           docker build -t $LOCAL_IMAGE_NAME:$VERSION_TAG .
-          echo "✅ Built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
+          echo "Built: $LOCAL_IMAGE_NAME:$VERSION_TAG"
 
       - name: Save Docker Image
         run: |
@@ -449,9 +449,9 @@ jobs:
           
           echo "Testing /health endpoint..."
           if curl -f http://localhost:3000/health; then
-            echo "✅ Health check passed"
+            echo "Health check passed"
           else
-            echo "❌ Health check failed"
+            echo "Health check failed"
             docker logs health-test
             exit 1
           fi
@@ -492,9 +492,9 @@ jobs:
           sleep 5
           
           if docker ps | grep startup-test; then
-            echo "✅ Container started successfully"
+            echo "Container started successfully"
           else
-            echo "❌ Container failed to start"
+            echo "Container failed to start"
             docker logs startup-test
             exit 1
           fi
@@ -529,9 +529,9 @@ jobs:
           echo "Image size: ${IMAGE_SIZE_MB}MB"
           
           if [ $IMAGE_SIZE_MB -gt 500 ]; then
-            echo "⚠️ Image is larger than 500MB"
+            echo "Image is larger than 500MB"
           else
-            echo "✅ Image size is acceptable"
+            echo "Image size is acceptable"
           fi
 
   # NEW: Port exposure test
@@ -559,9 +559,9 @@ jobs:
           EXPOSED_PORTS=$(docker image inspect $IMAGE_URI --format='{{json .Config.ExposedPorts}}')
           
           if echo "$EXPOSED_PORTS" | grep -q "3000"; then
-            echo "✅ Port 3000 is exposed"
+            echo "Port 3000 is exposed"
           else
-            echo "❌ Port 3000 is not exposed"
+            echo "Port 3000 is not exposed"
             exit 1
           fi
 
@@ -593,10 +593,10 @@ jobs:
           
           # Check if container is still running or exited gracefully
           if docker ps -a | grep env-test | grep -q "Exited"; then
-            echo "⚠️ Container exited (expected if env vars are required)"
+            echo "Container exited (expected if env vars are required)"
             docker logs env-test
           else
-            echo "✅ Container handles missing env vars gracefully"
+            echo "Container handles missing env vars gracefully"
           fi
           
           docker stop env-test 2>/dev/null || true
@@ -627,9 +627,9 @@ jobs:
           USER=$(docker image inspect $IMAGE_URI --format='{{.Config.User}}')
           
           if [ -z "$USER" ] || [ "$USER" = "root" ] || [ "$USER" = "0" ]; then
-            echo "⚠️ Container runs as root user (security risk)"
+            echo "Container runs as root user (security risk)"
           else
-            echo "✅ Container runs as non-root user: $USER"
+            echo "Container runs as non-root user: $USER"
           fi
 
   # NEW: Graceful shutdown test
@@ -674,9 +674,9 @@ jobs:
           echo "Shutdown time: ${SHUTDOWN_TIME}s"
           
           if [ $SHUTDOWN_TIME -lt 10 ]; then
-            echo "✅ Container shut down gracefully in ${SHUTDOWN_TIME}s"
+            echo "Container shut down gracefully in ${SHUTDOWN_TIME}s"
           else
-            echo "⚠️ Container took full timeout (10s) to shutdown"
+            echo "Container took full timeout (10s) to shutdown"
           fi
           
           docker rm shutdown-test
@@ -709,9 +709,9 @@ jobs:
           echo "Total layers: $LAYER_COUNT"
           
           if [ $LAYER_COUNT -gt 20 ]; then
-            echo "⚠️ Image has many layers ($LAYER_COUNT), consider optimization"
+            echo "Image has many layers ($LAYER_COUNT), consider optimization"
           else
-            echo "✅ Layer count is reasonable"
+            echo "Layer count is reasonable"
           fi
 
   # ============================================
@@ -749,9 +749,9 @@ jobs:
 
       - name: Validate Docker Hub Credentials
         run: |
-          [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && { echo "❌ DOCKERHUB_USERNAME not set"; exit 1; }
-          [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ] && { echo "❌ DOCKERHUB_TOKEN not set"; exit 1; }
-          echo "✅ Credentials configured"
+          [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] && { echo "DOCKERHUB_USERNAME not set"; exit 1; }
+          [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ] && { echo "DOCKERHUB_TOKEN not set"; exit 1; }
+          echo "Credentials configured"
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -770,18 +770,18 @@ jobs:
           
           # Verify local image exists
           if ! docker image inspect $LOCAL_IMAGE_NAME:$VERSION_TAG > /dev/null 2>&1; then
-            echo "❌ ERROR: Local image $LOCAL_IMAGE_NAME:$VERSION_TAG not found!"
+            echo "ERROR: Local image $LOCAL_IMAGE_NAME:$VERSION_TAG not found!"
             docker images
             exit 1
           fi
           
           # Tag with version
           docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:$VERSION_TAG
-          echo "✅ Tagged: $FULL_IMAGE_NAME:$VERSION_TAG"
+          echo "Tagged: $FULL_IMAGE_NAME:$VERSION_TAG"
           
           # Tag as latest
           docker tag $LOCAL_IMAGE_NAME:$VERSION_TAG $FULL_IMAGE_NAME:latest
-          echo "✅ Tagged: $FULL_IMAGE_NAME:latest"
+          echo "Tagged: $FULL_IMAGE_NAME:latest"
 
       - name: Check Image Test Results
         run: |
@@ -796,9 +796,9 @@ jobs:
           echo "Push on failure: ${{ needs.setup.outputs.push_on_test_failure }}"
           
           if [ "${{ needs.setup.outputs.push_on_test_failure }}" = "yes" ]; then
-            echo "⚠️ Pushing image despite test failures (push_on_test_failure=yes)"
+            echo "Pushing image despite test failures (push_on_test_failure=yes)"
           else
-            echo "✅ All image tests passed, proceeding with push"
+            echo "All image tests passed, proceeding with push"
           fi
 
       - name: Push Docker Image to Docker Hub
@@ -810,11 +810,11 @@ jobs:
           
           # Push version tag
           docker push $FULL_IMAGE_NAME:$VERSION_TAG
-          echo "✅ Pushed: $FULL_IMAGE_NAME:$VERSION_TAG"
+          echo "Pushed: $FULL_IMAGE_NAME:$VERSION_TAG"
           
           # Always push latest tag
           docker push $FULL_IMAGE_NAME:latest
-          echo "✅ Pushed: $FULL_IMAGE_NAME:latest"
+          echo "Pushed: $FULL_IMAGE_NAME:latest"
 
 
       - name: Cleanup Old Docker Hub Images
@@ -834,7 +834,7 @@ jobs:
             https://hub.docker.com/v2/users/login/ | jq -r .token)
           
           if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "⚠️ Could not authenticate with Docker Hub API"
+            echo "Could not authenticate with Docker Hub API"
             echo "Skipping cleanup (images will remain)"
             exit 0
           fi
@@ -863,15 +863,15 @@ jobs:
                 "https://hub.docker.com/v2/repositories/$REPO_NAME/tags/$TAG/" > /dev/null
               
               if [ $? -eq 0 ]; then
-                echo "  ✅ Deleted: $REPO_NAME:$TAG"
+                echo "  Deleted: $REPO_NAME:$TAG"
               else
-                echo "  ⚠️ Failed to delete: $REPO_NAME:$TAG"
+                echo "  Failed to delete: $REPO_NAME:$TAG"
               fi
             done
             
-            echo "✅ Cleanup complete: Deleted $DELETE_COUNT old images"
+            echo "Cleanup complete: Deleted $DELETE_COUNT old images"
           else
-            echo "✅ No cleanup needed: Only $TAG_COUNT images (keeping last 5)"
+            echo "No cleanup needed: Only $TAG_COUNT images (keeping last 5)"
           fi
 
 
@@ -894,6 +894,6 @@ jobs:
       
       - name: Cleanup Summary
         run: |
-          echo "✅ Artifact deleted from GitHub storage"
+          echo "Artifact deleted from GitHub storage"
           echo "Push: ${{ needs.push-image.result }}"
           echo "This frees up storage space and reduces costs"
