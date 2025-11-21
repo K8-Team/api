@@ -39,6 +39,7 @@ spec:
     tty: true
 '''
 
+
 properties([
     parameters([
         string(
@@ -156,7 +157,6 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
                         """
                     }
                 }
-            }
         }
     }
 }
