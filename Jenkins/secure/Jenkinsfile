@@ -94,23 +94,31 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
         stage("Run Tests") {
             container("nodejs") {
                 sh """
+                echo "TEST: Checking package.json existence"
                 if [ ! -f "package.json" ]; then
-                    echo "ERROR: package.json not found"
+                    echo "RESULT: FAILED - package.json not found"
                     exit 1
                 fi
+                echo "RESULT: PASSED - package.json found"
                 
+                echo "TEST: Installing production dependencies"
                 npm install --production
+                echo "RESULT: PASSED - Dependencies installed successfully"
                 
+                echo "TEST: Validating JavaScript syntax"
                 if [ -f "index.js" ]; then
-                    node -c index.js || exit 1
+                    node -c index.js && echo "RESULT: PASSED - index.js syntax valid" || { echo "RESULT: FAILED - index.js syntax error"; exit 1; }
                 elif [ -f "server.js" ]; then
-                    node -c server.js || exit 1
+                    node -c server.js && echo "RESULT: PASSED - server.js syntax valid" || { echo "RESULT: FAILED - server.js syntax error"; exit 1; }
                 elif [ -f "app.js" ]; then
-                    node -c app.js || exit 1
+                    node -c app.js && echo "RESULT: PASSED - app.js syntax valid" || { echo "RESULT: FAILED - app.js syntax error"; exit 1; }
                 fi
                 
+                echo "TEST: Running npm test suite"
                 if grep -q '\\"test\\"' package.json; then
-                    npm test || true
+                    npm test && echo "RESULT: PASSED - All tests passed" || echo "RESULT: WARNING - Some tests failed but continuing"
+                else
+                    echo "RESULT: SKIPPED - No test script defined"
                 fi
                 """
             }
@@ -171,26 +179,36 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
                             export TEST_IMAGE=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER}-test
                             
                             sleep 5
-                            echo '${ecrPassword}' | docker login --username AWS --password-stdin \${ECR_REGISTRY}
-                            docker pull \${TEST_IMAGE}
-                            docker inspect \${TEST_IMAGE} --format='Size: {{.Size}} bytes'
                             
+                            echo "TEST: Authenticating to ECR"
+                            echo '${ecrPassword}' | docker login --username AWS --password-stdin \${ECR_REGISTRY}
+                            echo "RESULT: PASSED - ECR authentication successful"
+                            
+                            echo "TEST: Pulling Docker image from ECR"
+                            docker pull \${TEST_IMAGE}
+                            echo "RESULT: PASSED - Image pulled successfully"
+                            
+                            echo "TEST: Inspecting Docker image"
+                            docker inspect \${TEST_IMAGE} --format='Size: {{.Size}} bytes'
+                            echo "RESULT: PASSED - Image inspection complete"
+                            
+                            echo "TEST: Starting container from image"
                             CONTAINER_ID=\$(docker run -d \${TEST_IMAGE})
                             sleep 3
                             
                             CONTAINER_STATUS=\$(docker inspect \${CONTAINER_ID} --format='{{.State.Status}}')
                             
                             if [ "\${CONTAINER_STATUS}" = "running" ]; then
-                                echo "Container is running"
+                                echo "RESULT: PASSED - Container started and is running"
                                 docker logs \${CONTAINER_ID}
                                 docker stop \${CONTAINER_ID} || true
                             else
                                 EXIT_CODE=\$(docker inspect \${CONTAINER_ID} --format='{{.State.ExitCode}}')
                                 if [ "\${EXIT_CODE}" = "0" ]; then
-                                    echo "Container started and exited cleanly (exit code 0)"
+                                    echo "RESULT: PASSED - Container started and exited cleanly"
                                     docker logs \${CONTAINER_ID}
                                 else
-                                    echo "ERROR: Container failed with exit code \${EXIT_CODE}"
+                                    echo "RESULT: FAILED - Container exited with error code \${EXIT_CODE}"
                                     docker logs \${CONTAINER_ID}
                                     exit 1
                                 fi
