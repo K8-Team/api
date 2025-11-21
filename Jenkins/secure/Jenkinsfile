@@ -154,32 +154,42 @@ podTemplate(cloud: 'kubernetes', label: 'kaniko', yaml: template) {
                 }
                 
                 stage("Test Docker Image") {
-                    container("docker") {
-                        sh """
-                        export AWS_REGION=${params.AWS_REGION}
-                        export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
-                        export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
-                        export TEST_IMAGE=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER}-test
+                    script {
+                        def ecrPassword = ""
+                        container("aws-cli") {
+                            ecrPassword = sh(
+                                script: "aws ecr get-login-password --region ${params.AWS_REGION}",
+                                returnStdout: true
+                            ).trim()
+                        }
                         
-                        sleep 5
-                        aws ecr get-login-password --region \${AWS_REGION} | docker login --username AWS --password-stdin \${ECR_REGISTRY}
-                        docker pull \${TEST_IMAGE}
-                        docker inspect \${TEST_IMAGE} --format='Size: {{.Size}} bytes'
-                        
-                        CONTAINER_ID=\$(docker run -d \${TEST_IMAGE})
-                        sleep 5
-                        
-                        if docker ps | grep -q \${CONTAINER_ID}; then
-                            docker logs \${CONTAINER_ID}
-                            docker stop \${CONTAINER_ID} || true
-                        else
-                            echo "ERROR: Container failed to start"
-                            docker logs \${CONTAINER_ID} || true
-                            exit 1
-                        fi
-                        
-                        docker rm \${CONTAINER_ID} || true
-                        """
+                        container("docker") {
+                            sh """
+                            export AWS_REGION=${params.AWS_REGION}
+                            export ECR_REPO_FULL=${params.ECR_REPO}/${params.IMAGE_NAME}
+                            export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.\${AWS_REGION}.amazonaws.com
+                            export TEST_IMAGE=\${ECR_REGISTRY}/\${ECR_REPO_FULL}:${BUILD_NUMBER}-test
+                            
+                            sleep 5
+                            echo '${ecrPassword}' | docker login --username AWS --password-stdin \${ECR_REGISTRY}
+                            docker pull \${TEST_IMAGE}
+                            docker inspect \${TEST_IMAGE} --format='Size: {{.Size}} bytes'
+                            
+                            CONTAINER_ID=\$(docker run -d \${TEST_IMAGE})
+                            sleep 5
+                            
+                            if docker ps | grep -q \${CONTAINER_ID}; then
+                                docker logs \${CONTAINER_ID}
+                                docker stop \${CONTAINER_ID} || true
+                            else
+                                echo "ERROR: Container failed to start"
+                                docker logs \${CONTAINER_ID} || true
+                                exit 1
+                            fi
+                            
+                            docker rm \${CONTAINER_ID} || true
+                            """
+                        }
                     }
                 }
                 
